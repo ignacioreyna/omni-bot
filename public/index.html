@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Omni-Bot</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Omni-Bot</h1>
+      <div class="header-controls">
+        <select id="session-select">
+          <option value="">Select session...</option>
+        </select>
+        <button id="new-session-btn" class="btn">+ New</button>
+        <button id="import-session-btn" class="btn">Import</button>
+      </div>
+    </header>
+
+    <div id="session-info" class="hidden">
+      <span id="session-name"></span>
+      <span id="session-dir"></span>
+      <div class="session-actions">
+        <button id="pause-btn" class="btn btn-small">Pause</button>
+        <button id="abort-btn" class="btn btn-small btn-danger hidden">Abort</button>
+      </div>
+    </div>
+
+    <main id="chat-container">
+      <div id="messages"></div>
+      <div id="streaming-message" class="message assistant hidden">
+        <div class="message-content">
+          <div id="streaming-text"></div>
+          <div id="streaming-tools" class="tools-container collapsed">
+            <div class="tools-toggle">
+              <span class="tools-icon">⚡</span>
+              <span class="tools-count">0 tools used</span>
+            </div>
+            <div class="tools-list"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <div id="autocomplete-container" class="autocomplete-container hidden">
+        <div id="autocomplete-list" class="autocomplete-list"></div>
+      </div>
+      <form id="message-form">
+        <textarea id="message-input" placeholder="Type a message..." rows="1" disabled></textarea>
+        <button type="button" id="voice-btn" class="btn" title="Record voice message" disabled>
+          <span id="voice-icon">🎤</span>
+        </button>
+        <button type="submit" id="send-btn" disabled>Send</button>
+      </form>
+    </footer>
+
+    <div id="new-session-modal" class="modal hidden">
+      <div class="modal-content">
+        <h2>New Session</h2>
+        <form id="new-session-form">
+          <label for="session-name-input">Name (optional)</label>
+          <input type="text" id="session-name-input" placeholder="Auto-generated from first message">
+
+          <label for="directory-select">Working Directory</label>
+          <select id="directory-select" required></select>
+
+          <label for="directory-input">Subdirectory</label>
+          <div class="subdir-input-row">
+            <input type="text" id="directory-input" placeholder="Subdirectory (optional)">
+            <button type="button" id="browse-btn" class="btn">Browse</button>
+          </div>
+          <div id="directory-browser" class="directory-browser hidden">
+            <div id="directory-list"></div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" id="cancel-modal-btn" class="btn">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="import-session-modal" class="modal hidden">
+      <div class="modal-content modal-content-wide">
+        <h2>Import Local Session</h2>
+        <div id="import-loading" class="import-loading">Loading local sessions...</div>
+        <div id="import-sessions-list" class="import-sessions-list hidden"></div>
+        <div id="import-empty" class="import-empty hidden">
+          No local Claude Code sessions found.
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="cancel-import-btn" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="permission-modal" class="modal hidden">
+      <div class="modal-content permission-modal-content">
+        <h2>Permission Required</h2>
+        <div class="permission-tool-name">
+          <span class="permission-label">Tool:</span>
+          <span id="permission-tool"></span>
+        </div>
+        <div id="permission-reason" class="permission-reason"></div>
+        <div class="permission-input-container">
+          <span class="permission-label">Parameters:</span>
+          <pre id="permission-input" class="permission-input"></pre>
+        </div>
+        <div class="permission-actions">
+          <button type="button" id="permission-deny" class="btn btn-danger">Deny</button>
+          <button type="button" id="permission-allow" class="btn btn-primary">Allow</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
