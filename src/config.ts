@@ -42,6 +42,12 @@ const configSchema = z.object({
   // Cloudflare Access settings (required if authMode=cloudflare)
   cfAccessTeamDomain: z.string().optional(), // e.g., "myteam.cloudflareaccess.com"
   cfAccessAud: z.string().optional(), // Application Audience tag from CF dashboard
+
+  // Interactive permissions: relay tool approvals to web UI instead of auto-approving
+  interactivePermissions: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
 });
 
 function loadConfig() {
@@ -54,6 +60,7 @@ function loadConfig() {
     authMode: process.env.AUTH_MODE,
     cfAccessTeamDomain: process.env.CF_ACCESS_TEAM_DOMAIN,
     cfAccessAud: process.env.CF_ACCESS_AUD,
+    interactivePermissions: process.env.INTERACTIVE_PERMISSIONS,
   });
 
   if (!result.success) {

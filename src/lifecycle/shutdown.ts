@@ -1,8 +1,11 @@
 import { closeDatabase } from '../persistence/database.js';
 import { coordinator } from '../coordinator/coordinator.js';
+import { allowSleep } from '../utils/caffeinate.js';
 
 export function shutdown(): void {
   console.log('Shutting down...');
+
+  allowSleep();
 
   console.log('Stopping active sessions...');
   coordinator.shutdown();

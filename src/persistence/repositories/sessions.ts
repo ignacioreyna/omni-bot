@@ -36,14 +36,41 @@ function rowToSession(row: SessionRow): Session {
   };
 }
 
-export function createSession(name: string, workingDirectory: string, ownerEmail: string): Session {
+export function createSession(
+  name: string,
+  workingDirectory: string,
+  ownerEmail: string,
+  claudeSessionId?: string
+): Session {
   const db = getDatabase();
   const id = uuidv4();
 
   db.prepare(
-    `INSERT INTO sessions (id, name, working_directory, status, owner_email)
-     VALUES (?, ?, ?, 'active', ?)`
-  ).run(id, name, workingDirectory, ownerEmail);
+    `INSERT INTO sessions (id, name, working_directory, status, owner_email, claude_session_id)
+     VALUES (?, ?, ?, 'active', ?, ?)`
+  ).run(id, name, workingDirectory, ownerEmail, claudeSessionId ?? null);
+
+  const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as SessionRow;
+  return rowToSession(row);
+}
+
+/**
+ * Create a session with a specific ID.
+ * Used when persisting draft sessions that already have an assigned ID.
+ */
+export function createSessionWithId(
+  id: string,
+  name: string,
+  workingDirectory: string,
+  ownerEmail: string,
+  claudeSessionId?: string
+): Session {
+  const db = getDatabase();
+
+  db.prepare(
+    `INSERT INTO sessions (id, name, working_directory, status, owner_email, claude_session_id)
+     VALUES (?, ?, ?, 'active', ?, ?)`
+  ).run(id, name, workingDirectory, ownerEmail, claudeSessionId ?? null);
 
   const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as SessionRow;
   return rowToSession(row);

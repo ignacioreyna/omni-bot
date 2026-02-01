@@ -111,6 +111,49 @@ We use the **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) instead of sp
 
 Key reference: See `claudegram` project for SDK usage patterns.
 
+### SDK Streaming Behavior
+
+The SDK emits multiple `assistant` messages during a single conversation turn:
+- One before tool use ("I'll check the file...")
+- One after tool use ("Now I'll proceed...")
+
+When accumulating text for display, track **message boundaries**, not just text block boundaries. Each new `assistant` message represents a new turn and should be separated from previous text (e.g., with `\n\n`).
+
+### Model Selection
+
+The SDK's `query` function accepts a `model` option for specifying which Claude model to use:
+
+```typescript
+await query({
+  prompt: 'Generate a title',
+  options: {
+    model: 'haiku', // Use Haiku for fast, cheap tasks
+    maxTurns: 1,
+    tools: [],
+    persistSession: false, // Don't save ephemeral queries
+  },
+});
+```
+
+This is useful for auxiliary tasks like title generation where you need speed over capability.
+
+### Draft Sessions
+
+Sessions can be created without a name. These "draft sessions" are held in memory and only persisted to the database when the first message is sent. At that point, the title is auto-generated using Claude Haiku.
+
+- Draft sessions have an `isDraft: true` flag in API responses
+- If a draft session never receives a message, it's never persisted
+- Useful for reducing database clutter from abandoned sessions
+
+### Permission System
+
+The `canUseTool` callback enables interactive permission handling:
+
+- **Safe tools** (auto-approved): `Read`, `Glob`, `Grep`, `Task`, `LS`, `WebFetch`, `WebSearch` - read-only operations
+- **Dangerous tools** (require approval): `Bash`, `Write`, `Edit` - can modify files or execute commands
+
+The permission manager (`src/permissions/manager.ts`) holds pending requests and resolves them when the user responds via WebSocket. Set `INTERACTIVE_PERMISSIONS=true` to enable this flow.
+
 ## Security & Authentication
 
 Two network access modes are supported:

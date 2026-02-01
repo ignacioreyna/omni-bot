@@ -1,18 +1,30 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server, IncomingMessage } from 'http';
-import { coordinator } from '../coordinator/coordinator.js';
-import { ClaudeEvent, ResultEvent } from '../claude/output-parser.js';
+import { coordinator, PermissionRequestData } from '../coordinator/coordinator.js';
+import { ClaudeEvent } from '../claude/output-parser.js';
+import { ResultData } from '../claude/cli-wrapper.js';
 import { validateWsToken } from './routes/auth.js';
 import { appConfig } from '../config.js';
 
+interface MessageOptions {
+  model?: 'sonnet' | 'opus' | 'haiku';
+  planMode?: boolean;
+}
+
 interface ClientMessage {
-  type: 'subscribe' | 'unsubscribe' | 'message' | 'abort';
+  type: 'subscribe' | 'unsubscribe' | 'message' | 'abort' | 'permission_response';
   sessionId?: string;
   content?: string;
+  options?: MessageOptions;
+  data?: {
+    id?: string;
+    allowed?: boolean;
+    message?: string;
+  };
 }
 
 interface ServerMessage {
-  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error' | 'user_message';
+  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error' | 'user_message' | 'permission_request' | 'session_updated';
   sessionId?: string;
   data?: unknown;
 }
@@ -34,7 +46,7 @@ export function setupWebSocket(server: Server): WebSocketServer {
     broadcast(wss, sessionId, { type: 'tool', sessionId, data: tool });
   });
 
-  coordinator.on('result', (sessionId: string, result: ResultEvent) => {
+  coordinator.on('result', (sessionId: string, result: ResultData) => {
     broadcast(wss, sessionId, { type: 'result', sessionId, data: result });
   });
 
@@ -44,6 +56,15 @@ export function setupWebSocket(server: Server): WebSocketServer {
 
   coordinator.on('event', (sessionId: string, event: ClaudeEvent) => {
     broadcast(wss, sessionId, { type: 'event', sessionId, data: event });
+  });
+
+  coordinator.on('permissionRequest', (sessionId: string, request: PermissionRequestData) => {
+    broadcast(wss, sessionId, { type: 'permission_request', sessionId, data: request });
+  });
+
+  coordinator.on('sessionUpdated', (session) => {
+    // Broadcast session update to all subscribed clients
+    broadcast(wss, session.id, { type: 'session_updated', sessionId: session.id, data: session });
   });
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
@@ -118,6 +139,12 @@ function handleClientMessage(wss: WebSocketServer, client: ExtendedWebSocket, me
       if (message.sessionId) {
         client.subscribedSessions.add(message.sessionId);
         sendToClient(client, { type: 'subscribed', sessionId: message.sessionId });
+
+        // Send current streaming state if session is active (for late-joining clients)
+        const currentText = coordinator.getCurrentStreamingText(message.sessionId);
+        if (currentText) {
+          sendToClient(client, { type: 'text', sessionId: message.sessionId, data: currentText });
+        }
       }
       break;
 
@@ -138,7 +165,7 @@ function handleClientMessage(wss: WebSocketServer, client: ExtendedWebSocket, me
           data: message.content
         });
 
-        coordinator.sendMessage(message.sessionId, message.content).catch((err: Error) => {
+        coordinator.sendMessage(message.sessionId, message.content, message.options).catch((err: Error) => {
           console.error('[WebSocket] Error sending message:', err);
           sendToClient(client, { type: 'error', sessionId: message.sessionId, data: err.message });
         });
@@ -148,6 +175,16 @@ function handleClientMessage(wss: WebSocketServer, client: ExtendedWebSocket, me
     case 'abort':
       if (message.sessionId) {
         coordinator.abortSession(message.sessionId);
+      }
+      break;
+
+    case 'permission_response':
+      if (message.data?.id) {
+        if (message.data.allowed) {
+          coordinator.allowPermission(message.data.id);
+        } else {
+          coordinator.denyPermission(message.data.id, message.data.message || 'User denied');
+        }
       }
       break;
   }

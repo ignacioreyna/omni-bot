@@ -16,10 +16,13 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.29",
+    "@types/multer": "^2.0.0",
     "better-sqlite3": "^11.7.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.0.2",
+    "nodejs-whisper": "^0.2.9",
     "uuid": "^11.0.5",
     "ws": "^8.18.0",
     "zod": "^4.3.6"
