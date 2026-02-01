@@ -28,21 +28,30 @@ async function getCfPublicKeys(): Promise<Record<string, string>> {
   const teamDomain = appConfig.cfAccessTeamDomain;
   const certsUrl = `https://${teamDomain}/cdn-cgi/access/certs`;
 
+  console.log('[CF Access] Fetching certs from:', certsUrl);
+
   const response = await fetch(certsUrl);
   if (!response.ok) {
     throw new Error(`Failed to fetch CF Access certs: ${response.status}`);
   }
 
-  const data = (await response.json()) as { keys: Array<{ kid: string; cert: string }> };
+  const data = (await response.json()) as { keys?: Array<{ kid: string; cert: string }>; public_certs?: Array<{ kid: string; cert: string }> };
+
+  console.log('[CF Access] Certs response keys:', Object.keys(data));
+
+  // CF Access returns "public_certs" not "keys"
+  const certArray = data.public_certs || data.keys || [];
 
   const keys: Record<string, string> = {};
-  for (const key of data.keys) {
+  for (const key of certArray) {
     keys[key.kid] = key.cert;
     publicKeyCache.set(key.kid, {
       key: key.cert,
       expiresAt: Date.now() + KEY_CACHE_TTL,
     });
   }
+
+  console.log('[CF Access] Loaded key IDs:', Object.keys(keys));
 
   return keys;
 }
