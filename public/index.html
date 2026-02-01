@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Omni-Bot</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Omni-Bot</h1>
+      <div class="header-controls">
+        <select id="session-select">
+          <option value="">Select session...</option>
+        </select>
+        <button id="new-session-btn" class="btn">+ New</button>
+      </div>
+    </header>
+
+    <div id="session-info" class="hidden">
+      <span id="session-name"></span>
+      <span id="session-dir"></span>
+      <div class="session-actions">
+        <button id="pause-btn" class="btn btn-small">Pause</button>
+        <button id="abort-btn" class="btn btn-small btn-danger hidden">Abort</button>
+      </div>
+    </div>
+
+    <main id="chat-container">
+      <div id="messages"></div>
+      <div id="streaming-message" class="message assistant hidden">
+        <div class="message-content">
+          <div id="streaming-text"></div>
+          <div id="streaming-tools"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <form id="message-form">
+        <textarea id="message-input" placeholder="Type a message..." rows="1" disabled></textarea>
+        <button type="submit" id="send-btn" disabled>Send</button>
+      </form>
+    </footer>
+
+    <div id="new-session-modal" class="modal hidden">
+      <div class="modal-content">
+        <h2>New Session</h2>
+        <form id="new-session-form">
+          <label for="session-name-input">Name</label>
+          <input type="text" id="session-name-input" required placeholder="my-project">
+
+          <label for="directory-select">Working Directory</label>
+          <select id="directory-select" required></select>
+          <input type="text" id="directory-input" placeholder="Subdirectory (optional)">
+
+          <div class="modal-actions">
+            <button type="button" id="cancel-modal-btn" class="btn">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
