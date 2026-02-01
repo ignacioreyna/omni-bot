@@ -3,6 +3,9 @@ const state = {
   currentSession: null,
   ws: null,
   isProcessing: false,
+  user: null,
+  wsToken: null,
+  authMode: 'tailscale',
 };
 
 const elements = {
@@ -29,10 +32,80 @@ const elements = {
 };
 
 async function init() {
+  // Check auth mode and get user info
+  await checkAuth();
+
   await loadSessions();
   await loadAllowedDirectories();
+
+  // Get WS token if in cloudflare mode
+  if (state.authMode === 'cloudflare') {
+    await getWsToken();
+  }
+
   connectWebSocket();
   setupEventListeners();
+}
+
+async function checkAuth() {
+  try {
+    // First check health to see auth mode
+    const healthRes = await fetch('/api/health');
+    const health = await healthRes.json();
+    state.authMode = health.authMode || 'tailscale';
+
+    // If in cloudflare mode, get user info
+    if (state.authMode === 'cloudflare') {
+      const authRes = await fetch('/api/auth/me');
+      if (authRes.ok) {
+        state.user = await authRes.json();
+        showUserInfo();
+      } else {
+        // Not authenticated - CF Access should handle this
+        console.log('Not authenticated');
+      }
+    }
+  } catch (err) {
+    console.error('Auth check failed:', err);
+  }
+}
+
+async function getWsToken() {
+  try {
+    const response = await fetch('/api/auth/ws-token', { method: 'POST' });
+    if (response.ok) {
+      const data = await response.json();
+      state.wsToken = data.token;
+
+      // Refresh token before expiry
+      const refreshIn = (data.expiresIn - 30) * 1000; // 30s before expiry
+      setTimeout(refreshWsToken, refreshIn);
+    }
+  } catch (err) {
+    console.error('Failed to get WS token:', err);
+  }
+}
+
+async function refreshWsToken() {
+  await getWsToken();
+  // Reconnect WS with new token
+  if (state.ws) {
+    state.ws.close();
+  }
+}
+
+function showUserInfo() {
+  if (state.user) {
+    // Add user email to header (create element if needed)
+    let userEl = document.getElementById('user-email');
+    if (!userEl) {
+      userEl = document.createElement('span');
+      userEl.id = 'user-email';
+      userEl.className = 'user-email';
+      document.querySelector('header').appendChild(userEl);
+    }
+    userEl.textContent = state.user.email;
+  }
 }
 
 async function loadSessions() {
@@ -72,7 +145,14 @@ function renderSessionSelect() {
 
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  state.ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+  let wsUrl = `${protocol}//${window.location.host}/ws`;
+
+  // Add token for cloudflare mode
+  if (state.authMode === 'cloudflare' && state.wsToken) {
+    wsUrl += `?token=${encodeURIComponent(state.wsToken)}`;
+  }
+
+  state.ws = new WebSocket(wsUrl);
 
   state.ws.onopen = () => {
     console.log('WebSocket connected');
@@ -155,6 +235,14 @@ function handleServerMessage(message) {
       hideStreamingMessage();
       state.isProcessing = false;
       updateUIState();
+      break;
+    case 'auth_error':
+      console.error('Auth error:', message.data);
+      // In cloudflare mode, this might mean token expired
+      // Try to refresh token and reconnect
+      if (state.authMode === 'cloudflare') {
+        refreshWsToken();
+      }
       break;
   }
 }

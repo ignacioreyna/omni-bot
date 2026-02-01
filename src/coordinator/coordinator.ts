@@ -39,12 +39,12 @@ export class Coordinator {
     }
   }
 
-  createSession(name: string, workingDirectory: string): sessionsRepo.Session {
+  createSession(name: string, workingDirectory: string, ownerEmail: string): sessionsRepo.Session {
     if (this.activeSessions.size >= appConfig.maxConcurrentSessions) {
       throw new Error(`Maximum concurrent sessions (${appConfig.maxConcurrentSessions}) reached`);
     }
 
-    const session = sessionsRepo.createSession(name, workingDirectory);
+    const session = sessionsRepo.createSession(name, workingDirectory, ownerEmail);
     return session;
   }
 
@@ -52,8 +52,8 @@ export class Coordinator {
     return sessionsRepo.getSession(id);
   }
 
-  getAllSessions(): sessionsRepo.Session[] {
-    return sessionsRepo.getAllSessions();
+  getAllSessions(ownerEmail?: string): sessionsRepo.Session[] {
+    return sessionsRepo.getAllSessions(ownerEmail);
   }
 
   async sendMessage(sessionId: string, message: string): Promise<void> {

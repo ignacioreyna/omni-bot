@@ -9,6 +9,7 @@ export interface Session {
   claudeSessionId: string | null;
   createdAt: string;
   lastMessageAt: string | null;
+  ownerEmail: string;
 }
 
 interface SessionRow {
@@ -19,6 +20,7 @@ interface SessionRow {
   claude_session_id: string | null;
   created_at: string;
   last_message_at: string | null;
+  owner_email: string;
 }
 
 function rowToSession(row: SessionRow): Session {
@@ -30,17 +32,18 @@ function rowToSession(row: SessionRow): Session {
     claudeSessionId: row.claude_session_id,
     createdAt: row.created_at,
     lastMessageAt: row.last_message_at,
+    ownerEmail: row.owner_email,
   };
 }
 
-export function createSession(name: string, workingDirectory: string): Session {
+export function createSession(name: string, workingDirectory: string, ownerEmail: string): Session {
   const db = getDatabase();
   const id = uuidv4();
 
   db.prepare(
-    `INSERT INTO sessions (id, name, working_directory, status)
-     VALUES (?, ?, ?, 'active')`
-  ).run(id, name, workingDirectory);
+    `INSERT INTO sessions (id, name, working_directory, status, owner_email)
+     VALUES (?, ?, ?, 'active', ?)`
+  ).run(id, name, workingDirectory, ownerEmail);
 
   const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as SessionRow;
   return rowToSession(row);
@@ -52,14 +55,26 @@ export function getSession(id: string): Session | null {
   return row ? rowToSession(row) : null;
 }
 
-export function getAllSessions(): Session[] {
+export function getAllSessions(ownerEmail?: string): Session[] {
   const db = getDatabase();
+  if (ownerEmail) {
+    const rows = db.prepare(
+      'SELECT * FROM sessions WHERE owner_email = ? ORDER BY last_message_at DESC NULLS LAST, created_at DESC'
+    ).all(ownerEmail) as SessionRow[];
+    return rows.map(rowToSession);
+  }
   const rows = db.prepare('SELECT * FROM sessions ORDER BY last_message_at DESC NULLS LAST, created_at DESC').all() as SessionRow[];
   return rows.map(rowToSession);
 }
 
-export function getActiveSessions(): Session[] {
+export function getActiveSessions(ownerEmail?: string): Session[] {
   const db = getDatabase();
+  if (ownerEmail) {
+    const rows = db
+      .prepare("SELECT * FROM sessions WHERE status = 'active' AND owner_email = ? ORDER BY last_message_at DESC NULLS LAST")
+      .all(ownerEmail) as SessionRow[];
+    return rows.map(rowToSession);
+  }
   const rows = db
     .prepare("SELECT * FROM sessions WHERE status = 'active' ORDER BY last_message_at DESC NULLS LAST")
     .all() as SessionRow[];

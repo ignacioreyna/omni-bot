@@ -14,8 +14,9 @@ interface SessionParams {
   id: string;
 }
 
-router.get('/', (_req: Request, res: Response) => {
-  const sessions = coordinator.getAllSessions();
+router.get('/', (req: Request, res: Response) => {
+  const ownerEmail = req.user?.email;
+  const sessions = coordinator.getAllSessions(ownerEmail);
   res.json(sessions);
 });
 
@@ -30,8 +31,10 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
 
+  const ownerEmail = req.user?.email ?? 'local@tailscale';
+
   try {
-    const session = coordinator.createSession(result.data.name, result.data.workingDirectory);
+    const session = coordinator.createSession(result.data.name, result.data.workingDirectory, ownerEmail);
     res.status(201).json(session);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
@@ -43,6 +46,11 @@ router.get('/:id', (req: Request<SessionParams>, res: Response) => {
   const session = coordinator.getSession(req.params.id);
   if (!session) {
     res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  // Check ownership
+  if (req.user && session.ownerEmail !== req.user.email) {
+    res.status(403).json({ error: 'Access denied' });
     return;
   }
   res.json(session);

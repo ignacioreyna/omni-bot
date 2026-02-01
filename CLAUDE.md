@@ -1,6 +1,6 @@
 # Omni-Bot
 
-Web-based Claude Code coordinator for remote access via Tailscale.
+Web-based Claude Code coordinator for remote access via Tailscale or Cloudflare Tunnel.
 
 ## Overview
 
@@ -43,6 +43,9 @@ Environment variables (see `.env.example`):
 - `ALLOWED_DIRECTORIES`: Comma-separated list of allowed working directories
 - `DATABASE_PATH`: Path to SQLite database
 - `MAX_CONCURRENT_SESSIONS`: Maximum concurrent sessions (default: 5)
+- `AUTH_MODE`: `tailscale` (default) or `cloudflare`
+- `CF_ACCESS_TEAM_DOMAIN`: Cloudflare team domain (if AUTH_MODE=cloudflare)
+- `CF_ACCESS_AUD`: Cloudflare Application Audience tag (if AUTH_MODE=cloudflare)
 
 ## Project Structure
 
@@ -108,8 +111,48 @@ We use the **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) instead of sp
 
 Key reference: See `claudegram` project for SDK usage patterns.
 
-## Security
+## Security & Authentication
 
-- **Network**: Use Tailscale to restrict access to your devices only
+Two network access modes are supported:
+
+### Option 1: Tailscale (Default)
+Set `AUTH_MODE=tailscale` in `.env`.
+- No authentication required at app level
+- Tailscale mesh VPN restricts access to your devices only
+
+### Option 2: Cloudflare Tunnel + Access
+Set `AUTH_MODE=cloudflare` in `.env` with CF Access credentials.
+- Public URL protected by Cloudflare Access (Zero Trust)
+- JWT validation for all requests
+- Supports Google, GitHub, email OTP login
+
+**Cloudflare Setup:**
+1. Install `cloudflared`: `brew install cloudflared`
+2. Create tunnel: `cloudflared tunnel create omni-bot`
+3. Configure `~/.cloudflared/config.yml`:
+   ```yaml
+   tunnel: <tunnel-id>
+   credentials-file: ~/.cloudflared/<tunnel-id>.json
+   ingress:
+     - hostname: omni-bot.yourdomain.com
+       service: http://localhost:3000
+     - service: http_status:404
+   ```
+4. Create DNS: `cloudflared tunnel route dns omni-bot omni-bot.yourdomain.com`
+5. In Cloudflare Zero Trust dashboard:
+   - Create Self-hosted Application for `omni-bot.yourdomain.com`
+   - Add Access Policy (e.g., Google login)
+   - Copy the Application Audience (AUD) tag
+6. Set env vars:
+   ```
+   AUTH_MODE=cloudflare
+   CF_ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com
+   CF_ACCESS_AUD=<aud-tag-from-dashboard>
+   ```
+7. Run tunnel: `cloudflared tunnel run omni-bot`
+
+## Other Security Notes
+
 - **Directory Guard**: Only whitelisted directories can be used
 - **No API Key**: Uses existing Claude Code authentication
+- **Session Ownership**: In cloudflare mode, sessions are scoped per user

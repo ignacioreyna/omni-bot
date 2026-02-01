@@ -1,7 +1,9 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { Server } from 'http';
+import { Server, IncomingMessage } from 'http';
 import { coordinator } from '../coordinator/coordinator.js';
 import { ClaudeEvent, ResultEvent } from '../claude/output-parser.js';
+import { validateWsToken } from './routes/auth.js';
+import { appConfig } from '../config.js';
 
 interface ClientMessage {
   type: 'subscribe' | 'unsubscribe' | 'message' | 'abort';
@@ -10,7 +12,7 @@ interface ClientMessage {
 }
 
 interface ServerMessage {
-  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event';
+  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error';
   sessionId?: string;
   data?: unknown;
 }
@@ -18,6 +20,7 @@ interface ServerMessage {
 interface ExtendedWebSocket extends WebSocket {
   subscribedSessions: Set<string>;
   isAlive: boolean;
+  userEmail?: string;
 }
 
 export function setupWebSocket(server: Server): WebSocketServer {
@@ -43,10 +46,34 @@ export function setupWebSocket(server: Server): WebSocketServer {
     broadcast(wss, sessionId, { type: 'event', sessionId, data: event });
   });
 
-  wss.on('connection', (ws: WebSocket) => {
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     const client = ws as ExtendedWebSocket;
     client.subscribedSessions = new Set();
     client.isAlive = true;
+
+    // Validate WS token from query params
+    const url = new URL(req.url || '/', `http://${req.headers.host}`);
+    const token = url.searchParams.get('token');
+
+    if (appConfig.authMode === 'cloudflare') {
+      if (!token) {
+        sendToClient(client, { type: 'auth_error', data: 'Missing authentication token' });
+        client.close(1008, 'Unauthorized');
+        return;
+      }
+
+      const userData = validateWsToken(token);
+      if (!userData) {
+        sendToClient(client, { type: 'auth_error', data: 'Invalid or expired token' });
+        client.close(1008, 'Unauthorized');
+        return;
+      }
+
+      client.userEmail = userData.email;
+    } else {
+      // Tailscale mode - no auth needed
+      client.userEmail = 'local@tailscale';
+    }
 
     client.on('pong', () => {
       client.isAlive = true;

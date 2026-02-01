@@ -61,6 +61,16 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 2,
+    up: `
+      -- Add owner_email column for multi-user support
+      ALTER TABLE sessions ADD COLUMN owner_email TEXT DEFAULT 'local@tailscale';
+
+      -- Index for filtering by owner
+      CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_email);
+    `,
+  },
 ];
 
 export function initDatabase(): Database.Database {
