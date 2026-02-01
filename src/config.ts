@@ -2,8 +2,29 @@ import { config } from 'dotenv';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import path from 'path';
+import os from 'os';
 
 config();
+
+// Expand ~ and $HOME in paths
+function expandPath(p: string): string {
+  let expanded = p;
+
+  // Expand ~ at start of path
+  if (expanded.startsWith('~/')) {
+    expanded = path.join(os.homedir(), expanded.slice(2));
+  } else if (expanded === '~') {
+    expanded = os.homedir();
+  }
+
+  // Expand $HOME
+  expanded = expanded.replace(/\$HOME/g, os.homedir());
+
+  // Expand other env vars like $VAR or ${VAR}
+  expanded = expanded.replace(/\$\{?(\w+)\}?/g, (_, name) => process.env[name] || '');
+
+  return expanded;
+}
 
 const configSchema = z.object({
   port: z.coerce.number().int().positive().default(3000),
@@ -53,8 +74,12 @@ function loadConfig() {
 
   return {
     ...result.data,
-    databasePath: path.resolve(result.data.databasePath),
-    allowedDirectories: result.data.allowedDirectories.map((d) => path.resolve(d)),
+    databasePath: path.resolve(expandPath(result.data.databasePath)),
+    allowedDirectories: result.data.allowedDirectories.map((d) => {
+      const expanded = expandPath(d);
+      // Only resolve if not already absolute
+      return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
+    }),
   };
 }
 
