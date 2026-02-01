@@ -12,7 +12,7 @@ interface ClientMessage {
 }
 
 interface ServerMessage {
-  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error';
+  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error' | 'user_message';
   sessionId?: string;
   data?: unknown;
 }
@@ -82,7 +82,7 @@ export function setupWebSocket(server: Server): WebSocketServer {
     client.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString()) as ClientMessage;
-        handleClientMessage(client, message);
+        handleClientMessage(wss, client, message);
       } catch (err) {
         sendToClient(client, { type: 'error', data: 'Invalid message format' });
       }
@@ -112,7 +112,7 @@ export function setupWebSocket(server: Server): WebSocketServer {
   return wss;
 }
 
-function handleClientMessage(client: ExtendedWebSocket, message: ClientMessage): void {
+function handleClientMessage(wss: WebSocketServer, client: ExtendedWebSocket, message: ClientMessage): void {
   switch (message.type) {
     case 'subscribe':
       if (message.sessionId) {
@@ -131,6 +131,13 @@ function handleClientMessage(client: ExtendedWebSocket, message: ClientMessage):
     case 'message':
       console.log('[WebSocket] Received message:', message);
       if (message.sessionId && message.content) {
+        // Broadcast user message to all OTHER clients (not the sender)
+        broadcastToOthers(wss, client, message.sessionId, {
+          type: 'user_message',
+          sessionId: message.sessionId,
+          data: message.content
+        });
+
         coordinator.sendMessage(message.sessionId, message.content).catch((err: Error) => {
           console.error('[WebSocket] Error sending message:', err);
           sendToClient(client, { type: 'error', sessionId: message.sessionId, data: err.message });
@@ -156,6 +163,15 @@ function broadcast(wss: WebSocketServer, sessionId: string, message: ServerMessa
   wss.clients.forEach((ws) => {
     const client = ws as ExtendedWebSocket;
     if (client.readyState === WebSocket.OPEN && client.subscribedSessions.has(sessionId)) {
+      client.send(JSON.stringify(message));
+    }
+  });
+}
+
+function broadcastToOthers(wss: WebSocketServer, sender: ExtendedWebSocket, sessionId: string, message: ServerMessage): void {
+  wss.clients.forEach((ws) => {
+    const client = ws as ExtendedWebSocket;
+    if (client !== sender && client.readyState === WebSocket.OPEN && client.subscribedSessions.has(sessionId)) {
       client.send(JSON.stringify(message));
     }
   });

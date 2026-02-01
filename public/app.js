@@ -218,6 +218,13 @@ function abortMessage() {
 
 function handleServerMessage(message) {
   switch (message.type) {
+    case 'user_message':
+      // Message from another device - show it
+      appendMessage('user', message.data);
+      state.isProcessing = true;
+      updateUIState();
+      showStreamingMessage();
+      break;
     case 'text':
       appendStreamingText(message.data);
       break;
