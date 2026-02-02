@@ -30,6 +30,9 @@ interface ServerMessage {
   type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error' | 'user_message' | 'permission_request' | 'session_updated' | 'claude_question';
   sessionId?: string;
   data?: unknown;
+  // Used in 'subscribed' message for catch-up
+  isProcessing?: boolean;
+  streamingText?: string;
 }
 
 interface ExtendedWebSocket extends WebSocket {
@@ -151,13 +154,17 @@ function handleClientMessage(wss: WebSocketServer, client: ExtendedWebSocket, me
     case 'subscribe':
       if (message.sessionId) {
         client.subscribedSessions.add(message.sessionId);
-        sendToClient(client, { type: 'subscribed', sessionId: message.sessionId });
 
-        // Send current streaming state if session is active (for late-joining clients)
-        const currentText = coordinator.getCurrentStreamingText(message.sessionId);
-        if (currentText) {
-          sendToClient(client, { type: 'text', sessionId: message.sessionId, data: currentText });
-        }
+        // Send subscription confirmation with catch-up data for late-joining clients
+        const isProcessing = coordinator.isSessionBusy(message.sessionId);
+        const streamingText = coordinator.getCurrentStreamingText(message.sessionId);
+
+        sendToClient(client, {
+          type: 'subscribed',
+          sessionId: message.sessionId,
+          isProcessing,
+          streamingText: streamingText || undefined,
+        });
       }
       break;
 
