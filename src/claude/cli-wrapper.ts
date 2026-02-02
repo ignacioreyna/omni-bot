@@ -29,7 +29,8 @@ const SAFE_TOOLS_FILE_ACCESS = ['Read', 'Glob', 'Grep'];
 const INTERACTIVE_TOOLS = ['AskUserQuestion'];
 
 /**
- * Check if a file path is within allowed directories or the working directory.
+ * Check if a file path is within allowed/readable directories or the working directory.
+ * This allows file access (Read, Glob, Grep) but not session creation.
  */
 function isPathAllowed(filePath: string | undefined, workingDirectory: string): boolean {
   if (!filePath) return true; // No path specified, let the tool handle it
@@ -41,8 +42,13 @@ function isPathAllowed(filePath: string | undefined, workingDirectory: string): 
     return true;
   }
 
-  // Check if within any allowed directory
-  return appConfig.allowedDirectories.some((dir) => resolved.startsWith(dir));
+  // Check if within any allowed directory (can create sessions here)
+  if (appConfig.allowedDirectories.some((dir) => resolved.startsWith(dir))) {
+    return true;
+  }
+
+  // Check if within any readable directory (can read but not create sessions)
+  return appConfig.readableDirectories.some((dir) => resolved.startsWith(dir));
 }
 
 export interface ResultData {
