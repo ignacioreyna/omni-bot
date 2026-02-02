@@ -199,3 +199,252 @@ Set `AUTH_MODE=cloudflare` in `.env` with CF Access credentials.
 - **Directory Guard**: Only whitelisted directories can be used
 - **No API Key**: Uses existing Claude Code authentication
 - **Session Ownership**: In cloudflare mode, sessions are scoped per user
+
+## Code Style & Conventions
+
+### TypeScript
+- Strict mode enabled - all checks on
+- Explicit return types for public functions
+- Use `unknown` instead of `any`
+- Interfaces for objects, types for unions
+
+### Naming
+- Files: `kebab-case.ts`
+- Classes: `PascalCase`
+- Functions/Variables: `camelCase`
+- Constants: `SCREAMING_SNAKE_CASE`
+
+### Commits
+Follow Conventional Commits:
+- `feat(scope): add new feature`
+- `fix(scope): fix bug`
+- `docs(scope): update docs`
+- `refactor(scope): refactor code`
+- `chore(scope): maintenance task`
+
+### Formatting
+Run before committing:
+```bash
+npm run lint:fix
+npm run format
+```
+
+## Database Schema
+
+### sessions
+```sql
+CREATE TABLE sessions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  workingDirectory TEXT NOT NULL,
+  ownerEmail TEXT NOT NULL,
+  status TEXT NOT NULL,  -- active, paused, completed, errored
+  model TEXT,            -- haiku, sonnet, opus (can be NULL)
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+)
+```
+
+### messages
+```sql
+CREATE TABLE messages (
+  id TEXT PRIMARY KEY,
+  sessionId TEXT NOT NULL,
+  role TEXT NOT NULL,        -- user, assistant
+  content TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  FOREIGN KEY (sessionId) REFERENCES sessions(id) ON DELETE CASCADE
+)
+```
+
+## Key Components Reference
+
+### Coordinator (`src/coordinator/coordinator.ts`)
+Central orchestrator managing:
+- Active Claude processes (Map<sessionId, ClaudeProcess>)
+- Draft sessions (in-memory before first message)
+- Event emission to WebSocket clients
+- Permission request coordination
+- AskUserQuestion handling
+
+**Key methods:**
+- `createSession(workingDir, ownerEmail, name?, model?)`: Create new session
+- `sendMessage(sessionId, content, options?)`: Send message to Claude
+- `pauseSession(sessionId)`: Suspend session
+- `resumeSession(sessionId)`: Reactivate session
+- `abortSession(sessionId)`: Stop current operation
+
+### Permission Manager (`src/permissions/manager.ts`)
+Handles interactive approval for dangerous operations.
+
+**Pattern extraction:**
+- Bash: Extracts command prefix (e.g., "git commit")
+- File ops: Extracts directory path (e.g., "Write:/path/to/dir/*")
+- Used for "Allow Similar" feature
+
+**Timeout:** 10 minutes per request, auto-denies if no response
+
+### Model Router (`src/models/model-router.ts`)
+Auto-selects model based on:
+- Keywords in message (explain→Haiku, refactor→Opus)
+- Code length (< 50 lines→Haiku, > 200 lines→Opus)
+- Default: Sonnet
+
+### Title Generator (`src/utils/title-generator.ts`)
+Generates session titles using Claude Haiku:
+- Ephemeral query (not persisted)
+- Fast and cost-efficient
+- Triggered on first message to draft session
+
+## WebSocket Events Reference
+
+### Client → Server
+- `subscribe`: Subscribe to session events
+- `unsubscribe`: Unsubscribe from session
+- `message`: Send message to Claude
+- `abort`: Abort current operation
+- `permissionResponse`: Respond to permission request
+- `claudeQuestionResponse`: Answer Claude question
+
+### Server → Client
+- `text`: Streaming text from Claude
+- `tool`: Tool use notification
+- `result`: Final result of message exchange
+- `error`: Error occurred
+- `sessionUpdated`: Session metadata changed
+- `permissionRequest`: Permission needed (if INTERACTIVE_PERMISSIONS=true)
+- `claudeQuestion`: Claude asking a question (AskUserQuestion tool)
+
+## Configuration Reference
+
+### Required
+- `ALLOWED_DIRECTORIES`: Comma-separated paths where sessions can be created
+
+### Optional
+- `PORT`: Server port (default: 3000)
+- `DATABASE_PATH`: SQLite DB path (default: ./data/omni-bot.db)
+- `MAX_CONCURRENT_SESSIONS`: Concurrent session limit (default: 5)
+- `SESSION_SECRET`: Token signing secret (auto-generated if not set)
+- `READABLE_DIRECTORIES`: Read-only directory access (comma-separated)
+- `INTERACTIVE_PERMISSIONS`: Enable permission UI (default: false)
+
+### Auth Mode: Tailscale (default)
+- `AUTH_MODE=tailscale`
+- No additional config needed
+
+### Auth Mode: Cloudflare
+- `AUTH_MODE=cloudflare`
+- `CF_ACCESS_TEAM_DOMAIN`: Your team domain
+- `CF_ACCESS_AUD`: Application Audience tag
+
+## Common Patterns
+
+### Creating a New Route
+1. Create file in `src/server/routes/`
+2. Export Express Router
+3. Register in `src/server/app.ts`
+
+### Adding Database Table
+1. Update schema in `src/persistence/database.ts`
+2. Create repository in `src/persistence/repositories/`
+3. Use prepared statements (SQL injection prevention)
+
+### Adding WebSocket Event
+1. Define in `CoordinatorEvents` interface
+2. Emit from coordinator: `this.emit('eventName', ...)`
+3. Handle in `src/server/websocket.ts`
+
+### Adding Permission Pattern
+Update `extractPattern()` and `matchesPattern()` in `src/permissions/manager.ts`
+
+## Common Issues & Solutions
+
+### Issue: Claude CLI Not Found
+**Solution:** Ensure Claude Code CLI is installed and in PATH
+
+### Issue: Directory Not Allowed
+**Solution:** Add to `ALLOWED_DIRECTORIES` in `.env` and restart server
+
+### Issue: Database Locked
+**Solution:** Ensure single server instance; WAL mode is enabled by default
+
+### Issue: WebSocket Disconnects
+**Solution:** Check firewall, ensure WebSocket upgrade headers pass through proxy
+
+### Issue: Permission Request Timeout
+**Solution:** 10-minute limit; user must respond or request auto-denies
+
+## Dependencies Overview
+
+### Core
+- `express`: Web server
+- `ws`: WebSocket server
+- `better-sqlite3`: SQLite database
+- `@anthropic-ai/claude-agent-sdk`: Claude integration
+- `zod`: Configuration validation
+
+### Utilities
+- `uuid`: ID generation
+- `jsonwebtoken`: JWT validation (Cloudflare mode)
+- `multer`: File uploads (voice transcription)
+- `nodejs-whisper`: Audio transcription
+- `dotenv`: Environment variables
+
+### Development
+- `typescript`: TypeScript compiler
+- `tsx`: TypeScript execution with watch
+- `eslint`: Linting
+- `prettier`: Code formatting
+- `vitest`: Testing framework
+
+## Documentation
+
+Comprehensive docs in `docs/`:
+- `ARCHITECTURE.md`: System design and component overview
+- `INSTALLATION.md`: Setup and deployment guide
+- `USAGE.md`: User guide for web interface
+- `API.md`: REST and WebSocket API reference
+- `DEVELOPMENT.md`: Contributing guide and development workflow
+
+## Testing
+
+Run tests:
+```bash
+npm run test        # Run once
+npm run test:watch  # Watch mode
+```
+
+Write tests in `src/**/__tests__/` using Vitest.
+
+## Deployment
+
+### Development
+```bash
+npm run dev
+```
+
+### Production
+```bash
+npm run build
+npm start
+```
+
+### Process Manager (PM2)
+```bash
+pm2 start dist/index.js --name omni-bot
+pm2 save
+pm2 startup
+```
+
+### Docker (Optional)
+See `docs/INSTALLATION.md` for Dockerfile example.
+
+## Monitoring
+
+Check logs for:
+- Session creation/deletion
+- Permission requests (if interactive mode on)
+- Error messages
+- WebSocket connections
+
+Future: Add structured logging, metrics, tracing.
