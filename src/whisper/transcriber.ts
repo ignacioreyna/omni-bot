@@ -9,5 +9,11 @@ export async function transcribeAudio(audioPath: string): Promise<string> {
     removeWavFileAfterTranscription: false,
   });
 
-  return transcript || '';
+  // Strip Whisper timestamp markers like [00:00:00.000 --> 00:00:02.500]
+  const cleaned = (transcript || '')
+    .replace(/\[\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+
+  return cleaned;
 }
