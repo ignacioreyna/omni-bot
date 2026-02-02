@@ -109,8 +109,6 @@ We use the **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) instead of sp
 - Attempts to fake TTY (node-pty, script command, unbuffer) all fail for various reasons
 - The SDK handles all TTY complexity internally and provides a clean async generator API
 
-Key reference: See `claudegram` project for SDK usage patterns.
-
 ### SDK Streaming Behavior
 
 The SDK emits multiple `assistant` messages during a single conversation turn:
