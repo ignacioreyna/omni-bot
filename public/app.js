@@ -12,6 +12,8 @@ const state = {
   isRecording: false,
   isTranscribing: false,
   pendingPermission: null, // Current permission request awaiting response
+  pendingQuestion: null, // Current Claude question awaiting response
+  questionAnswers: {}, // Accumulated answers for multi-question forms
   // Slash command state
   pendingModel: null, // Model for next message
   pendingPlanMode: false, // Plan mode for next message
@@ -79,8 +81,16 @@ const elements = {
   permissionTool: document.getElementById('permission-tool'),
   permissionInput: document.getElementById('permission-input'),
   permissionReason: document.getElementById('permission-reason'),
+  permissionPattern: document.getElementById('permission-pattern'),
+  permissionPatternValue: document.getElementById('permission-pattern-value'),
   permissionAllow: document.getElementById('permission-allow'),
+  permissionAllowSimilar: document.getElementById('permission-allow-similar'),
   permissionDeny: document.getElementById('permission-deny'),
+  // Question modal elements
+  questionModal: document.getElementById('question-modal'),
+  questionContainer: document.getElementById('question-container'),
+  questionSubmit: document.getElementById('question-submit'),
+  questionCancel: document.getElementById('question-cancel'),
   // Autocomplete elements
   autocompleteContainer: document.getElementById('autocomplete-container'),
   autocompleteList: document.getElementById('autocomplete-list'),
@@ -358,6 +368,9 @@ function handleServerMessage(message) {
       break;
     case 'permission_request':
       showPermissionDialog(message.data);
+      break;
+    case 'claude_question':
+      showQuestionDialog(message.data);
       break;
     case 'session_updated':
       // Session was updated (e.g., draft became named session)
@@ -1001,6 +1014,7 @@ function updateVoiceButtonState() {
 
 // Permission dialog functions
 function showPermissionDialog(request) {
+  console.log('[Permission] Showing dialog for request:', request);
   state.pendingPermission = request;
   elements.permissionTool.textContent = request.toolName;
   elements.permissionInput.textContent = JSON.stringify(request.input, null, 2);
@@ -1011,6 +1025,13 @@ function showPermissionDialog(request) {
     elements.permissionReason.textContent = '';
     elements.permissionReason.classList.add('hidden');
   }
+  // Show pattern for "Allow Similar" preview
+  if (request.pattern) {
+    elements.permissionPatternValue.textContent = request.pattern;
+    elements.permissionPattern.classList.remove('hidden');
+  } else {
+    elements.permissionPattern.classList.add('hidden');
+  }
   elements.permissionModal.classList.remove('hidden');
 }
 
@@ -1019,19 +1040,190 @@ function hidePermissionDialog() {
   state.pendingPermission = null;
 }
 
-function respondToPermission(allowed) {
+function respondToPermission(allowed, allowSimilar = false) {
+  console.log('[Permission] Responding:', allowed, 'allowSimilar:', allowSimilar, 'for request:', state.pendingPermission);
   if (state.pendingPermission && state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({
+    const response = {
       type: 'permission_response',
       sessionId: state.currentSession?.id,
       data: {
         id: state.pendingPermission.id,
         allowed,
+        allowSimilar: allowed ? allowSimilar : undefined,
         message: allowed ? undefined : 'User denied permission',
       },
-    }));
+    };
+    console.log('[Permission] Sending response:', response);
+    state.ws.send(JSON.stringify(response));
+  } else {
+    console.log('[Permission] Cannot send response - pendingPermission:', !!state.pendingPermission, 'ws:', !!state.ws, 'readyState:', state.ws?.readyState);
   }
   hidePermissionDialog();
+}
+
+// Question dialog functions (for Claude's AskUserQuestion tool)
+function showQuestionDialog(questionData) {
+  console.log('[Question] Showing dialog for question:', questionData);
+  state.pendingQuestion = questionData;
+  state.questionAnswers = {};
+
+  // Build the question UI
+  const container = elements.questionContainer;
+  container.innerHTML = '';
+
+  for (let i = 0; i < questionData.questions.length; i++) {
+    const q = questionData.questions[i];
+    const questionDiv = document.createElement('div');
+    questionDiv.className = 'question-item';
+    questionDiv.dataset.questionIndex = i;
+
+    const questionText = document.createElement('div');
+    questionText.className = 'question-text';
+    questionText.textContent = q.question;
+    questionDiv.appendChild(questionText);
+
+    if (q.header) {
+      const header = document.createElement('div');
+      header.className = 'question-header';
+      header.textContent = q.header;
+      questionDiv.insertBefore(header, questionText);
+    }
+
+    const optionsDiv = document.createElement('div');
+    optionsDiv.className = 'question-options';
+
+    // Render predefined options as buttons
+    for (const opt of q.options) {
+      const optBtn = document.createElement('button');
+      optBtn.type = 'button';
+      optBtn.className = 'question-option-btn';
+      optBtn.dataset.label = opt.label;
+      optBtn.dataset.questionIndex = i;
+
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'option-label';
+      labelSpan.textContent = opt.label;
+      optBtn.appendChild(labelSpan);
+
+      if (opt.description) {
+        const descSpan = document.createElement('span');
+        descSpan.className = 'option-description';
+        descSpan.textContent = opt.description;
+        optBtn.appendChild(descSpan);
+      }
+
+      optBtn.addEventListener('click', () => handleQuestionOptionClick(i, opt.label, q.multiSelect));
+      optionsDiv.appendChild(optBtn);
+    }
+
+    questionDiv.appendChild(optionsDiv);
+
+    // Add "Other" input field
+    const otherDiv = document.createElement('div');
+    otherDiv.className = 'question-other';
+    const otherInput = document.createElement('input');
+    otherInput.type = 'text';
+    otherInput.className = 'question-other-input';
+    otherInput.placeholder = 'Other (type custom answer)';
+    otherInput.dataset.questionIndex = i;
+    otherInput.addEventListener('input', (e) => handleQuestionOtherInput(i, e.target.value));
+    otherDiv.appendChild(otherInput);
+    questionDiv.appendChild(otherDiv);
+
+    container.appendChild(questionDiv);
+  }
+
+  elements.questionModal.classList.remove('hidden');
+}
+
+function handleQuestionOptionClick(questionIndex, label, multiSelect) {
+  const questionItem = elements.questionContainer.querySelector(`[data-question-index="${questionIndex}"]`);
+  const buttons = questionItem.querySelectorAll('.question-option-btn');
+  const otherInput = questionItem.querySelector('.question-other-input');
+
+  if (multiSelect) {
+    // Toggle selection for multi-select
+    const btn = Array.from(buttons).find(b => b.dataset.label === label);
+    if (btn) {
+      btn.classList.toggle('selected');
+    }
+    // Build array of selected options
+    const selected = Array.from(buttons)
+      .filter(b => b.classList.contains('selected'))
+      .map(b => b.dataset.label);
+    state.questionAnswers[questionIndex] = selected.length > 0 ? selected.join(', ') : '';
+  } else {
+    // Single select - clear others
+    buttons.forEach(b => b.classList.remove('selected'));
+    const btn = Array.from(buttons).find(b => b.dataset.label === label);
+    if (btn) {
+      btn.classList.add('selected');
+    }
+    otherInput.value = '';
+    state.questionAnswers[questionIndex] = label;
+  }
+}
+
+function handleQuestionOtherInput(questionIndex, value) {
+  const questionItem = elements.questionContainer.querySelector(`[data-question-index="${questionIndex}"]`);
+  const buttons = questionItem.querySelectorAll('.question-option-btn');
+
+  if (value.trim()) {
+    // Clear button selections when typing in Other
+    buttons.forEach(b => b.classList.remove('selected'));
+    state.questionAnswers[questionIndex] = value.trim();
+  } else {
+    // If Other is cleared, remove the answer
+    delete state.questionAnswers[questionIndex];
+  }
+}
+
+function hideQuestionDialog() {
+  elements.questionModal.classList.add('hidden');
+  state.pendingQuestion = null;
+  state.questionAnswers = {};
+}
+
+function submitQuestionResponse() {
+  console.log('[Question] Submitting response:', state.questionAnswers);
+  if (state.pendingQuestion && state.ws && state.ws.readyState === WebSocket.OPEN) {
+    // Convert questionAnswers (indexed by position) to the format Claude expects
+    const answers = {};
+    for (const [index, answer] of Object.entries(state.questionAnswers)) {
+      // Use question text as key or fall back to index
+      const question = state.pendingQuestion.questions[parseInt(index)];
+      const key = question?.question || `question_${index}`;
+      answers[key] = answer;
+    }
+
+    const response = {
+      type: 'question_response',
+      sessionId: state.currentSession?.id,
+      data: {
+        id: state.pendingQuestion.id,
+        answers,
+      },
+    };
+    console.log('[Question] Sending response:', response);
+    state.ws.send(JSON.stringify(response));
+  }
+  hideQuestionDialog();
+}
+
+function cancelQuestionResponse() {
+  console.log('[Question] Cancelling question');
+  if (state.pendingQuestion && state.ws && state.ws.readyState === WebSocket.OPEN) {
+    const response = {
+      type: 'question_response',
+      sessionId: state.currentSession?.id,
+      data: {
+        id: state.pendingQuestion.id,
+        cancelled: true,
+      },
+    };
+    state.ws.send(JSON.stringify(response));
+  }
+  hideQuestionDialog();
 }
 
 // Slash command handlers
@@ -1323,8 +1515,13 @@ function setupEventListeners() {
   elements.voiceBtn.addEventListener('click', toggleRecording);
 
   // Permission dialog event listeners
-  elements.permissionAllow.addEventListener('click', () => respondToPermission(true));
+  elements.permissionAllow.addEventListener('click', () => respondToPermission(true, false));
+  elements.permissionAllowSimilar.addEventListener('click', () => respondToPermission(true, true));
   elements.permissionDeny.addEventListener('click', () => respondToPermission(false));
+
+  // Question dialog event listeners
+  elements.questionSubmit.addEventListener('click', submitQuestionResponse);
+  elements.questionCancel.addEventListener('click', cancelQuestionResponse);
 
   elements.newSessionModal.addEventListener('click', (e) => {
     if (e.target === elements.newSessionModal) {

@@ -1,9 +1,9 @@
-import { ClaudeProcess, PermissionRequest, PermissionResult, ResultData } from '../claude/cli-wrapper.js';
+import { ClaudeProcess, PermissionRequest, PermissionResult, ResultData, AskUserQuestionInput, AskUserQuestionResponse } from '../claude/cli-wrapper.js';
 import { ClaudeEvent } from '../claude/output-parser.js';
 import * as sessionsRepo from '../persistence/repositories/sessions.js';
 import * as messagesRepo from '../persistence/repositories/messages.js';
 import { appConfig } from '../config.js';
-import { permissionManager } from '../permissions/manager.js';
+import { permissionManager, extractPattern } from '../permissions/manager.js';
 import { generateSessionTitle } from '../utils/title-generator.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -12,6 +12,11 @@ export interface PermissionRequestData {
   toolName: string;
   input: Record<string, unknown>;
   reason?: string;
+}
+
+export interface ClaudeQuestionData {
+  id: string;
+  questions: AskUserQuestionInput['questions'];
 }
 
 export interface MessageOptions {
@@ -27,6 +32,7 @@ export interface CoordinatorEvents {
   error: (sessionId: string, error: Error) => void;
   sessionUpdated: (session: sessionsRepo.Session) => void;
   permissionRequest: (sessionId: string, request: PermissionRequestData) => void;
+  claudeQuestion: (sessionId: string, question: ClaudeQuestionData) => void;
 }
 
 type EventCallback<K extends keyof CoordinatorEvents> = CoordinatorEvents[K];
@@ -43,6 +49,16 @@ export interface DraftSession {
   createdAt: string;
 }
 
+interface PendingQuestion {
+  id: string;
+  sessionId: string;
+  resolve: (response: AskUserQuestionResponse) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}
+
+const QUESTION_TIMEOUT_MS = 600000; // 10 minutes
+
 export class Coordinator {
   private activeSessions: Map<string, ClaudeProcess> = new Map();
   private eventListeners: Map<keyof CoordinatorEvents, Set<EventCallback<keyof CoordinatorEvents>>> = new Map();
@@ -51,6 +67,8 @@ export class Coordinator {
   private forkedSessions: Set<string> = new Set();
   // Track draft sessions (not yet persisted, waiting for first message)
   private draftSessions: Map<string, DraftSession> = new Map();
+  // Track pending AskUserQuestion requests
+  private pendingQuestions: Map<string, PendingQuestion> = new Map();
 
   constructor() {
     // Listen to permission manager events and relay them
@@ -245,6 +263,9 @@ export class Coordinator {
         onPermissionRequest: appConfig.interactivePermissions
           ? (request: PermissionRequest) => this.handlePermissionRequest(sessionId, request)
           : undefined,
+        onAskUserQuestion: appConfig.interactivePermissions
+          ? (input: AskUserQuestionInput, toolUseID: string) => this.handleAskUserQuestion(sessionId, input, toolUseID)
+          : undefined,
       });
       this.activeSessions.set(sessionId, claudeProcess);
       this.setupProcessListeners(sessionId, claudeProcess);
@@ -331,6 +352,14 @@ export class Coordinator {
     }
     // Cancel any pending permission requests for this session
     permissionManager.cancelAllForSession(sessionId);
+    // Cancel any pending questions for this session
+    for (const [id, pending] of this.pendingQuestions.entries()) {
+      if (pending.sessionId === sessionId) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Session terminated'));
+        this.pendingQuestions.delete(id);
+      }
+    }
     sessionsRepo.updateSession(sessionId, { status: 'terminated' });
     return true;
   }
@@ -349,8 +378,94 @@ export class Coordinator {
     return permissionManager.allow(id);
   }
 
+  /**
+   * Allow a permission and also approve similar future requests.
+   * Returns the pattern that was added, or null if permission wasn't found.
+   */
+  allowSimilarPermission(id: string): { pattern: string } | null {
+    return permissionManager.allowSimilar(id);
+  }
+
+  /**
+   * Get the pattern that would be extracted for a permission request.
+   * Used by frontend to show what "Allow Similar" would match.
+   */
+  getPermissionPattern(id: string): string | null {
+    const pending = permissionManager.getPending(id);
+    if (!pending) return null;
+    return extractPattern(pending.toolName, pending.input);
+  }
+
   denyPermission(id: string, message: string): boolean {
     return permissionManager.deny(id, message);
+  }
+
+  /**
+   * Handle AskUserQuestion tool calls - relay to user and wait for response.
+   */
+  private handleAskUserQuestion(
+    sessionId: string,
+    input: AskUserQuestionInput,
+    toolUseID: string
+  ): Promise<AskUserQuestionResponse> {
+    return new Promise((resolve, reject) => {
+      const id = uuidv4();
+      console.log('[Coordinator] Creating question request with id:', id);
+
+      const timeout = setTimeout(() => {
+        this.pendingQuestions.delete(id);
+        reject(new Error('Question request timed out'));
+      }, QUESTION_TIMEOUT_MS);
+
+      const pending: PendingQuestion = {
+        id,
+        sessionId,
+        resolve,
+        reject,
+        timeout,
+      };
+
+      this.pendingQuestions.set(id, pending);
+
+      // Emit the question event for WebSocket to relay
+      this.emit('claudeQuestion', sessionId, {
+        id,
+        questions: input.questions,
+      });
+    });
+  }
+
+  /**
+   * Answer a pending question from Claude.
+   */
+  answerQuestion(id: string, answers: Record<string, string>): boolean {
+    console.log('[Coordinator] answerQuestion called with id:', id);
+    const pending = this.pendingQuestions.get(id);
+    if (!pending) {
+      console.log('[Coordinator] No pending question found for id:', id);
+      return false;
+    }
+
+    console.log('[Coordinator] Found pending question, resolving with answers');
+    clearTimeout(pending.timeout);
+    this.pendingQuestions.delete(id);
+    pending.resolve({ answers });
+    return true;
+  }
+
+  /**
+   * Cancel a pending question (e.g., user clicked Cancel).
+   */
+  cancelQuestion(id: string): boolean {
+    const pending = this.pendingQuestions.get(id);
+    if (!pending) {
+      return false;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingQuestions.delete(id);
+    pending.reject(new Error('User cancelled question'));
+    return true;
   }
 
   isSessionBusy(sessionId: string): boolean {

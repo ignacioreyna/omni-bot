@@ -110,9 +110,25 @@
           <span class="permission-label">Parameters:</span>
           <pre id="permission-input" class="permission-input"></pre>
         </div>
+        <div id="permission-pattern" class="permission-pattern hidden">
+          <span class="permission-label">Allow Similar will match:</span>
+          <code id="permission-pattern-value"></code>
+        </div>
         <div class="permission-actions">
           <button type="button" id="permission-deny" class="btn btn-danger">Deny</button>
+          <button type="button" id="permission-allow-similar" class="btn btn-secondary">Allow Similar</button>
           <button type="button" id="permission-allow" class="btn btn-primary">Allow</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="question-modal" class="modal hidden">
+      <div class="modal-content question-modal-content">
+        <h2>Claude is asking</h2>
+        <div id="question-container"></div>
+        <div class="question-actions">
+          <button type="button" id="question-cancel" class="btn btn-danger">Cancel</button>
+          <button type="button" id="question-submit" class="btn btn-primary">Submit</button>
         </div>
       </div>
     </div>

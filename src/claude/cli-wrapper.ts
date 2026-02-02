@@ -21,7 +21,29 @@ export interface PermissionRequest {
 export type { PermissionResult };
 
 // Safe tools that don't need user approval (read-only operations)
-const SAFE_TOOLS = ['Read', 'Glob', 'Grep', 'Task', 'LS', 'WebFetch', 'WebSearch'];
+// Note: File-accessing tools (Read, Glob, Grep) are conditionally safe - only if path is within allowed directories
+const SAFE_TOOLS_UNCONDITIONAL = ['Task', 'LS', 'WebFetch', 'WebSearch'];
+const SAFE_TOOLS_FILE_ACCESS = ['Read', 'Glob', 'Grep'];
+
+// Tools that require user interaction (not permission, but relay)
+const INTERACTIVE_TOOLS = ['AskUserQuestion'];
+
+/**
+ * Check if a file path is within allowed directories or the working directory.
+ */
+function isPathAllowed(filePath: string | undefined, workingDirectory: string): boolean {
+  if (!filePath) return true; // No path specified, let the tool handle it
+
+  const resolved = path.resolve(workingDirectory, filePath);
+
+  // Check if within working directory
+  if (resolved.startsWith(workingDirectory)) {
+    return true;
+  }
+
+  // Check if within any allowed directory
+  return appConfig.allowedDirectories.some((dir) => resolved.startsWith(dir));
+}
 
 export interface ResultData {
   text: string;
@@ -59,11 +81,25 @@ export interface MessageOptions {
   planMode?: boolean;
 }
 
+export interface AskUserQuestionInput {
+  questions: Array<{
+    question: string;
+    header?: string;
+    options: Array<{ label: string; description?: string }>;
+    multiSelect?: boolean;
+  }>;
+}
+
+export interface AskUserQuestionResponse {
+  answers: Record<string, string>;
+}
+
 export interface ClaudeProcessOptions {
   workingDirectory: string;
   resumeSessionId?: string;
   forkSession?: boolean;
   onPermissionRequest?: (request: PermissionRequest) => Promise<PermissionResult>;
+  onAskUserQuestion?: (input: AskUserQuestionInput, toolUseID: string) => Promise<AskUserQuestionResponse>;
 }
 
 export class ClaudeProcess extends EventEmitter {
@@ -73,6 +109,7 @@ export class ClaudeProcess extends EventEmitter {
   private isRunning = false;
   private abortController: AbortController | null = null;
   private onPermissionRequest?: (request: PermissionRequest) => Promise<PermissionResult>;
+  private onAskUserQuestion?: (input: AskUserQuestionInput, toolUseID: string) => Promise<AskUserQuestionResponse>;
 
   constructor(options: ClaudeProcessOptions) {
     super();
@@ -80,6 +117,7 @@ export class ClaudeProcess extends EventEmitter {
     this.claudeSessionId = options.resumeSessionId ?? null;
     this.forkSession = options.forkSession ?? false;
     this.onPermissionRequest = options.onPermissionRequest;
+    this.onAskUserQuestion = options.onAskUserQuestion;
   }
 
   private validateDirectory(): void {
@@ -116,7 +154,7 @@ export class ClaudeProcess extends EventEmitter {
 
       const queryOptions: Parameters<typeof query>[0]['options'] = {
         cwd: this.workingDirectory,
-        tools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'],
+        // Use all available tools (no tools restriction)
         allowedTools: ['Bash(git:*)'],
         permissionMode,
         abortController: this.abortController,
@@ -147,9 +185,37 @@ export class ClaudeProcess extends EventEmitter {
               toolUseID: string;
             }
           ) => {
-            // Auto-approve safe read-only tools
-            if (SAFE_TOOLS.includes(toolName)) {
-              return { behavior: 'allow' as const };
+            // Auto-approve unconditionally safe tools (no file access)
+            // SDK requires updatedInput to be a record, use original input
+            if (SAFE_TOOLS_UNCONDITIONAL.includes(toolName)) {
+              return { behavior: 'allow', updatedInput: input };
+            }
+
+            // For file-accessing tools, only auto-approve if path is within allowed directories
+            if (SAFE_TOOLS_FILE_ACCESS.includes(toolName)) {
+              const filePath = (input.file_path || input.path) as string | undefined;
+              if (isPathAllowed(filePath, this.workingDirectory)) {
+                return { behavior: 'allow', updatedInput: input };
+              }
+              // Path is outside allowed directories - require permission
+              console.log(`[ClaudeProcess] ${toolName} path outside allowed directories:`, filePath);
+            }
+
+            // Handle AskUserQuestion specially - relay to user and return their answer
+            if (INTERACTIVE_TOOLS.includes(toolName) && toolName === 'AskUserQuestion') {
+              if (this.onAskUserQuestion) {
+                try {
+                  const questionInput = input as unknown as AskUserQuestionInput;
+                  const response = await this.onAskUserQuestion(questionInput, options.toolUseID);
+                  // Return allow with the user's answers as updatedInput
+                  return { behavior: 'allow', updatedInput: { answers: response.answers } };
+                } catch (error) {
+                  console.error('[ClaudeProcess] Error handling AskUserQuestion:', error);
+                  return { behavior: 'deny', message: 'Failed to get user response' };
+                }
+              }
+              // If no handler, auto-approve but answers will be empty
+              return { behavior: 'allow', updatedInput: input };
             }
 
             // Relay dangerous tools (Bash, Write, Edit, etc.) to user
@@ -164,7 +230,7 @@ export class ClaudeProcess extends EventEmitter {
             }
 
             // Fallback: deny if no handler
-            return { behavior: 'deny' as const, message: 'No permission handler configured' };
+            return { behavior: 'deny', message: 'No permission handler configured' };
           },
         } : {}),
       };

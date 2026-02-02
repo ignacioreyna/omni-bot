@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server, IncomingMessage } from 'http';
-import { coordinator, PermissionRequestData } from '../coordinator/coordinator.js';
+import { coordinator, PermissionRequestData, ClaudeQuestionData } from '../coordinator/coordinator.js';
 import { ClaudeEvent } from '../claude/output-parser.js';
 import { ResultData } from '../claude/cli-wrapper.js';
 import { validateWsToken } from './routes/auth.js';
@@ -12,19 +12,22 @@ interface MessageOptions {
 }
 
 interface ClientMessage {
-  type: 'subscribe' | 'unsubscribe' | 'message' | 'abort' | 'permission_response';
+  type: 'subscribe' | 'unsubscribe' | 'message' | 'abort' | 'permission_response' | 'question_response';
   sessionId?: string;
   content?: string;
   options?: MessageOptions;
   data?: {
     id?: string;
     allowed?: boolean;
+    allowSimilar?: boolean;
     message?: string;
+    answers?: Record<string, string>;
+    cancelled?: boolean;
   };
 }
 
 interface ServerMessage {
-  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error' | 'user_message' | 'permission_request' | 'session_updated';
+  type: 'subscribed' | 'unsubscribed' | 'text' | 'tool' | 'result' | 'error' | 'event' | 'auth_error' | 'user_message' | 'permission_request' | 'session_updated' | 'claude_question';
   sessionId?: string;
   data?: unknown;
 }
@@ -59,7 +62,17 @@ export function setupWebSocket(server: Server): WebSocketServer {
   });
 
   coordinator.on('permissionRequest', (sessionId: string, request: PermissionRequestData) => {
-    broadcast(wss, sessionId, { type: 'permission_request', sessionId, data: request });
+    // Add pattern preview to the request data
+    const pattern = coordinator.getPermissionPattern(request.id);
+    broadcast(wss, sessionId, {
+      type: 'permission_request',
+      sessionId,
+      data: { ...request, pattern }
+    });
+  });
+
+  coordinator.on('claudeQuestion', (sessionId: string, question: ClaudeQuestionData) => {
+    broadcast(wss, sessionId, { type: 'claude_question', sessionId, data: question });
   });
 
   coordinator.on('sessionUpdated', (session) => {
@@ -179,12 +192,39 @@ function handleClientMessage(wss: WebSocketServer, client: ExtendedWebSocket, me
       break;
 
     case 'permission_response':
+      console.log('[WebSocket] Received permission_response:', message.data);
       if (message.data?.id) {
         if (message.data.allowed) {
-          coordinator.allowPermission(message.data.id);
+          if (message.data.allowSimilar) {
+            // Allow and add pattern for future similar requests
+            const result = coordinator.allowSimilarPermission(message.data.id);
+            console.log('[WebSocket] allowSimilarPermission result:', result);
+          } else {
+            // Just allow this one request
+            const result = coordinator.allowPermission(message.data.id);
+            console.log('[WebSocket] allowPermission result:', result);
+          }
         } else {
-          coordinator.denyPermission(message.data.id, message.data.message || 'User denied');
+          const result = coordinator.denyPermission(message.data.id, message.data.message || 'User denied');
+          console.log('[WebSocket] denyPermission result:', result);
         }
+      } else {
+        console.log('[WebSocket] permission_response missing id');
+      }
+      break;
+
+    case 'question_response':
+      console.log('[WebSocket] Received question_response:', message.data);
+      if (message.data?.id) {
+        if (message.data.cancelled) {
+          const result = coordinator.cancelQuestion(message.data.id);
+          console.log('[WebSocket] cancelQuestion result:', result);
+        } else if (message.data.answers) {
+          const result = coordinator.answerQuestion(message.data.id, message.data.answers);
+          console.log('[WebSocket] answerQuestion result:', result);
+        }
+      } else {
+        console.log('[WebSocket] question_response missing id');
       }
       break;
   }
