@@ -19,20 +19,78 @@ const state = {
   pendingPlanMode: false, // Plan mode for next message
   autocompleteIndex: -1, // Currently selected autocomplete item
   lastResultData: null, // Stores result data with usage info
+  // Pending session - not yet created on server
+  pendingSession: null, // { workingDirectory: string }
+  // Activity tracking
+  lastActivityTime: null, // Timestamp of last SDK event
+  currentToolName: null, // Currently executing tool
+  // Sidebar state
+  sidebarCollapsed: false,
+  sidebarOpen: false, // For mobile
+  // Confirm dialog callback
+  confirmCallback: null,
 };
 
 // Slash commands definition
 const SLASH_COMMANDS = [
   {
+    name: '/new',
+    args: '',
+    description: 'Open new session modal',
+    handler: handleNewCommand,
+  },
+  {
+    name: '/switch',
+    args: '<name>',
+    description: 'Fuzzy switch to session',
+    handler: handleSwitchCommand,
+  },
+  {
+    name: '/import',
+    args: '',
+    description: 'Import local Claude session',
+    handler: handleImportCommand,
+  },
+  {
+    name: '/rename',
+    args: '<name>',
+    description: 'Rename current session',
+    handler: handleRenameCommand,
+  },
+  {
+    name: '/delete',
+    args: '',
+    description: 'Delete current session',
+    handler: handleDeleteCommand,
+  },
+  {
+    name: '/export',
+    args: '[json|md]',
+    description: 'Export current session',
+    handler: handleExportCommand,
+  },
+  {
+    name: '/search',
+    args: '<query>',
+    description: 'Search sessions and messages',
+    handler: handleSearchCommand,
+  },
+  {
+    name: '/abort',
+    args: '',
+    description: 'Abort current processing',
+    handler: handleAbortCommand,
+  },
+  {
     name: '/resume',
-    args: '<session-id>',
-    description: 'Switch to another session',
+    args: '[session-id]',
+    description: 'Switch to session (or search)',
     handler: handleResumeCommand,
   },
   {
     name: '/model',
-    args: '<sonnet|opus|haiku>',
-    description: 'Change model for next message',
+    args: '[haiku|sonnet|opus]',
+    description: 'Change model for session',
     handler: handleModelCommand,
   },
   {
@@ -41,16 +99,32 @@ const SLASH_COMMANDS = [
     description: 'Enable plan mode for next message',
     handler: handlePlanCommand,
   },
+  {
+    name: '/teleport',
+    args: '',
+    description: 'Get command to continue in terminal',
+    handler: handleTeleportCommand,
+  },
 ];
 
 const elements = {
-  sessionSelect: document.getElementById('session-select'),
+  // Sidebar elements
+  sidebar: document.getElementById('sidebar'),
+  sidebarToggle: document.getElementById('sidebar-toggle'),
+  sidebarOverlay: document.getElementById('sidebar-overlay'),
+  sidebarSearchBtn: document.getElementById('sidebar-search-btn'),
+  sidebarSearchContainer: document.getElementById('sidebar-search-container'),
+  sessionSearch: document.getElementById('session-search'),
+  sessionsList: document.getElementById('sessions-list'),
+  sidebarUser: document.getElementById('sidebar-user'),
+  hamburgerBtn: document.getElementById('hamburger-btn'),
+  // Header elements
+  sessionName: document.getElementById('session-name'),
+  sessionNameInputInline: document.getElementById('session-name-input-inline'),
+  // Main content
+  mainContent: document.getElementById('main-content'),
   newSessionBtn: document.getElementById('new-session-btn'),
   importSessionBtn: document.getElementById('import-session-btn'),
-  sessionInfo: document.getElementById('session-info'),
-  sessionName: document.getElementById('session-name'),
-  sessionDir: document.getElementById('session-dir'),
-  pauseBtn: document.getElementById('pause-btn'),
   abortBtn: document.getElementById('abort-btn'),
   messages: document.getElementById('messages'),
   streamingMessage: document.getElementById('streaming-message'),
@@ -61,6 +135,7 @@ const elements = {
   sendBtn: document.getElementById('send-btn'),
   voiceBtn: document.getElementById('voice-btn'),
   voiceIcon: document.getElementById('voice-icon'),
+  voiceCancelBtn: document.getElementById('voice-cancel-btn'),
   newSessionModal: document.getElementById('new-session-modal'),
   newSessionForm: document.getElementById('new-session-form'),
   sessionNameInput: document.getElementById('session-name-input'),
@@ -91,6 +166,12 @@ const elements = {
   questionContainer: document.getElementById('question-container'),
   questionSubmit: document.getElementById('question-submit'),
   questionCancel: document.getElementById('question-cancel'),
+  // Confirm modal elements
+  confirmModal: document.getElementById('confirm-modal'),
+  confirmTitle: document.getElementById('confirm-title'),
+  confirmMessage: document.getElementById('confirm-message'),
+  confirmOk: document.getElementById('confirm-ok'),
+  confirmCancel: document.getElementById('confirm-cancel'),
   // Autocomplete elements
   autocompleteContainer: document.getElementById('autocomplete-container'),
   autocompleteList: document.getElementById('autocomplete-list'),
@@ -100,6 +181,9 @@ const elements = {
 let streamingToolCount = 0;
 
 async function init() {
+  // Load sidebar state from localStorage
+  loadSidebarState();
+
   // Check auth mode and get user info
   await checkAuth();
 
@@ -118,9 +202,42 @@ async function init() {
   const urlParams = new URLSearchParams(window.location.search);
   const sessionId = urlParams.get('session');
   if (sessionId && state.sessions.find(s => s.id === sessionId)) {
-    elements.sessionSelect.value = sessionId;
     selectSession(sessionId);
   }
+}
+
+function loadSidebarState() {
+  const collapsed = localStorage.getItem('sidebarCollapsed');
+  state.sidebarCollapsed = collapsed === 'true';
+  if (state.sidebarCollapsed) {
+    elements.sidebar.classList.add('collapsed');
+    elements.mainContent.classList.add('sidebar-collapsed');
+  }
+}
+
+function saveSidebarState() {
+  localStorage.setItem('sidebarCollapsed', state.sidebarCollapsed);
+}
+
+function toggleSidebar() {
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  elements.sidebar.classList.toggle('collapsed', state.sidebarCollapsed);
+  elements.mainContent.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+  saveSidebarState();
+}
+
+function openMobileSidebar() {
+  state.sidebarOpen = true;
+  elements.sidebar.classList.add('open');
+  elements.sidebarOverlay.classList.add('visible');
+  elements.sidebarOverlay.classList.remove('hidden');
+}
+
+function closeMobileSidebar() {
+  state.sidebarOpen = false;
+  elements.sidebar.classList.remove('open');
+  elements.sidebarOverlay.classList.remove('visible');
+  elements.sidebarOverlay.classList.add('hidden');
 }
 
 async function checkAuth() {
@@ -172,15 +289,15 @@ async function refreshWsToken() {
 
 function showUserInfo() {
   if (state.user) {
-    // Add user email to header (create element if needed)
-    let userEl = document.getElementById('user-email');
-    if (!userEl) {
-      userEl = document.createElement('span');
-      userEl.id = 'user-email';
-      userEl.className = 'user-email';
-      document.querySelector('header').appendChild(userEl);
+    const userAvatar = elements.sidebarUser.querySelector('.user-avatar');
+    const userEmailText = elements.sidebarUser.querySelector('.user-email-text');
+
+    if (userAvatar && state.user.email) {
+      userAvatar.textContent = state.user.email.charAt(0).toUpperCase();
     }
-    userEl.textContent = state.user.email;
+    if (userEmailText) {
+      userEmailText.textContent = state.user.email;
+    }
   }
 }
 
@@ -188,7 +305,7 @@ async function loadSessions() {
   try {
     const response = await fetch('/api/sessions');
     state.sessions = await response.json();
-    renderSessionSelect();
+    renderSessionsList();
   } catch (err) {
     console.error('Failed to load sessions:', err);
   }
@@ -213,18 +330,22 @@ function getSessionDisplayName(session) {
   return session.name || '(Untitled)';
 }
 
-function renderSessionSelect() {
-  const options = ['<option value="">Select session...</option>'];
-  for (const session of state.sessions) {
-    const status = session.status === 'active' ? '🟢' : session.status === 'paused' ? '🟡' : '⚫';
+function renderSessionsList() {
+  const html = state.sessions.map(session => {
+    const isActive = state.currentSession?.id === session.id;
+    const statusClass = session.status === 'active' ? 'active' :
+                       session.status === 'paused' ? 'paused' : 'terminated';
     const displayName = getSessionDisplayName(session);
-    options.push(`<option value="${session.id}">${status} ${displayName}</option>`);
-  }
-  elements.sessionSelect.innerHTML = options.join('');
 
-  if (state.currentSession) {
-    elements.sessionSelect.value = state.currentSession.id;
-  }
+    return `
+      <div class="session-item${isActive ? ' active' : ''}" data-session-id="${session.id}">
+        <span class="session-status ${statusClass}"></span>
+        <span class="session-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
+      </div>
+    `;
+  }).join('');
+
+  elements.sessionsList.innerHTML = html;
 }
 
 function connectWebSocket() {
@@ -273,14 +394,26 @@ function unsubscribeFromSession(sessionId) {
 }
 
 function sendMessage(content) {
+  // If pending session, create it first
+  if (state.pendingSession) {
+    createAndSendFirstMessage(content);
+    return;
+  }
+
   if (!state.currentSession || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
     return;
   }
 
+  sendMessageToSession(content);
+}
+
+function sendMessageToSession(content) {
   // Build message options from pending state
+  // Use pendingModel if set, otherwise fall back to session's persisted model
   const options = {};
-  if (state.pendingModel) {
-    options.model = state.pendingModel;
+  const modelToUse = state.pendingModel || state.currentSession?.model;
+  if (modelToUse) {
+    options.model = modelToUse;
   }
   if (state.pendingPlanMode) {
     options.planMode = true;
@@ -319,6 +452,49 @@ function sendMessage(content) {
   showStreamingMessage();
 }
 
+async function createAndSendFirstMessage(content) {
+  const { workingDirectory } = state.pendingSession;
+  state.pendingSession = null;
+
+  try {
+    // Create session via API (no name - will be draft, title generated on server)
+    const response = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingDirectory }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      alert(error.error || 'Failed to create session');
+      // Restore pending session state so user can try again
+      state.pendingSession = { workingDirectory };
+      return;
+    }
+
+    const session = await response.json();
+    state.sessions.unshift(session);
+    state.currentSession = session;
+    renderSessionsList();
+
+    // Update URL with new session ID
+    const url = new URL(window.location);
+    url.searchParams.set('session', session.id);
+    window.history.pushState({}, '', url);
+
+    // Subscribe to the new session
+    subscribeToSession(session.id);
+
+    // Now send the message
+    sendMessageToSession(content);
+  } catch (err) {
+    console.error('Failed to create session:', err);
+    alert('Failed to create session');
+    // Restore pending session state so user can try again
+    state.pendingSession = { workingDirectory };
+  }
+}
+
 function abortMessage() {
   if (!state.currentSession || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
     return;
@@ -332,6 +508,17 @@ function abortMessage() {
 
 function handleServerMessage(message) {
   switch (message.type) {
+    case 'subscribed':
+      // Handle catch-up data when subscribing to an active session
+      if (message.isProcessing) {
+        state.isProcessing = true;
+        showStreamingMessage();
+        updateUIState();
+      }
+      if (message.streamingText) {
+        appendStreamingText(message.streamingText);
+      }
+      break;
     case 'user_message':
       // Message from another device - show it
       appendMessage('user', message.data);
@@ -345,10 +532,14 @@ function handleServerMessage(message) {
     case 'tool':
       appendStreamingTool(message.data);
       break;
+    case 'event':
+      handleActivityEvent(message.data);
+      break;
     case 'result':
       state.lastResultData = message.data;
       finalizeStreamingMessage();
       state.isProcessing = false;
+      state.currentToolName = null;
       updateUIState();
       break;
     case 'error':
@@ -356,6 +547,7 @@ function handleServerMessage(message) {
       appendMessage('assistant', `Error: ${message.data}`);
       hideStreamingMessage();
       state.isProcessing = false;
+      state.currentToolName = null;
       updateUIState();
       break;
     case 'auth_error':
@@ -379,6 +571,26 @@ function handleServerMessage(message) {
   }
 }
 
+function handleActivityEvent(event) {
+  state.lastActivityTime = Date.now();
+
+  if (event.type === 'tool_progress') {
+    state.currentToolName = event.tool_name;
+    const elapsed = Math.round(event.elapsed_time_seconds || 0);
+    updateThinkingIndicator(`Running: ${event.tool_name} (${elapsed}s)`);
+  }
+}
+
+function updateThinkingIndicator(text) {
+  const indicator = elements.streamingText.querySelector('.thinking-indicator');
+  if (indicator) {
+    const textEl = indicator.querySelector('.thinking-text');
+    if (textEl) {
+      textEl.textContent = text;
+    }
+  }
+}
+
 function handleSessionUpdated(updatedSession) {
   // Update session in state
   const idx = state.sessions.findIndex(s => s.id === updatedSession.id);
@@ -392,15 +604,25 @@ function handleSessionUpdated(updatedSession) {
     elements.sessionName.textContent = getSessionDisplayName(updatedSession);
   }
 
-  // Re-render session dropdown
-  renderSessionSelect();
+  // Re-render sessions list
+  renderSessionsList();
 }
 
-function appendMessage(role, content) {
+function appendMessage(role, content, metadata = null) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
   const rendered = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content);
-  div.innerHTML = `<div class="message-content">${rendered}</div>`;
+
+  // Build usage footer if metadata present
+  let usageHtml = '';
+  if (role === 'assistant' && metadata) {
+    const usageText = formatUsageFooter(metadata);
+    if (usageText) {
+      usageHtml = `<div class="message-usage">${usageText}</div>`;
+    }
+  }
+
+  div.innerHTML = `<div class="message-content">${rendered}</div>${usageHtml}`;
   elements.messages.appendChild(div);
   scrollToBottom();
 }
@@ -419,7 +641,10 @@ function renderMarkdown(text) {
 }
 
 function showStreamingMessage() {
-  elements.streamingText.textContent = '';
+  // Show thinking indicator initially
+  elements.streamingText.innerHTML = '<span class="thinking-indicator"><span class="thinking-text">Thinking</span><span class="thinking-dots"></span></span>';
+  state.lastActivityTime = Date.now();
+  state.currentToolName = null;
   streamingToolCount = 0;
   const toolsList = elements.streamingTools.querySelector('.tools-list');
   const toolsCount = elements.streamingTools.querySelector('.tools-count');
@@ -436,6 +661,12 @@ function hideStreamingMessage() {
 }
 
 function appendStreamingText(text) {
+  // Clear thinking indicator if present (on first real text)
+  const thinkingIndicator = elements.streamingText.querySelector('.thinking-indicator');
+  if (thinkingIndicator) {
+    elements.streamingText.innerHTML = '';
+  }
+  state.lastActivityTime = Date.now();
   // Replace instead of append - cli-wrapper emits full accumulated text, not deltas
   elements.streamingText.textContent = text;
   scrollToBottom();
@@ -486,7 +717,7 @@ function formatUsageFooter(resultData) {
   const tokenPart = `${formatNumber(inputTokens)} in / ${formatNumber(outputTokens)} out`;
 
   if (modelName) {
-    parts.push(`${modelName} • ${tokenPart}`);
+    parts.push(`${modelName} \u2022 ${tokenPart}`);
   } else {
     parts.push(tokenPart);
   }
@@ -502,7 +733,7 @@ function formatUsageFooter(resultData) {
     parts.push(`${seconds}s`);
   }
 
-  return parts.join(' • ');
+  return parts.join(' \u2022 ');
 }
 
 function extractModelName(modelId) {
@@ -541,7 +772,7 @@ function finalizeStreamingMessage() {
       toolsHtml = `
         <div class="tools-container collapsed">
           <div class="tools-toggle">
-            <span class="tools-icon">⚡</span>
+            <span class="tools-icon">&#9889;</span>
             <span class="tools-count">${streamingToolCount} tool${streamingToolCount !== 1 ? 's' : ''} used</span>
           </div>
           <div class="tools-list">${toolsListHtml}</div>
@@ -597,9 +828,10 @@ async function selectSession(sessionId) {
 
   if (!sessionId) {
     state.currentSession = null;
-    elements.sessionInfo.classList.add('hidden');
+    elements.sessionName.textContent = '';
     elements.messages.innerHTML = '';
     updateUIState();
+    renderSessionsList();
     // Clear URL param
     const url = new URL(window.location);
     url.searchParams.delete('session');
@@ -612,18 +844,21 @@ async function selectSession(sessionId) {
 
   state.currentSession = session;
   elements.sessionName.textContent = getSessionDisplayName(session);
-  elements.sessionDir.textContent = session.workingDirectory;
-  elements.sessionInfo.classList.remove('hidden');
-  updatePauseButton();
 
   subscribeToSession(sessionId);
   await loadMessages(sessionId);
   updateUIState();
+  renderSessionsList();
 
   // Update URL with session ID
   const url = new URL(window.location);
   url.searchParams.set('session', sessionId);
   window.history.pushState({}, '', url);
+
+  // Close mobile sidebar after selection
+  if (state.sidebarOpen) {
+    closeMobileSidebar();
+  }
 }
 
 async function loadMessages(sessionId) {
@@ -632,7 +867,7 @@ async function loadMessages(sessionId) {
     const messages = await response.json();
     elements.messages.innerHTML = '';
     for (const msg of messages) {
-      appendMessage(msg.role, msg.content);
+      appendMessage(msg.role, msg.content, msg.metadata);
     }
   } catch (err) {
     console.error('Failed to load messages:', err);
@@ -640,8 +875,8 @@ async function loadMessages(sessionId) {
 }
 
 function updateUIState() {
-  const hasSession = !!state.currentSession;
-  const isActive = hasSession && state.currentSession.status === 'active';
+  const hasSession = !!state.currentSession || !!state.pendingSession;
+  const isActive = (state.currentSession?.status === 'active') || !!state.pendingSession;
   const canSend = isActive && !state.isProcessing;
 
   elements.messageInput.disabled = !canSend;
@@ -650,63 +885,291 @@ function updateUIState() {
   elements.abortBtn.classList.toggle('hidden', !state.isProcessing);
 }
 
-function updatePauseButton() {
-  if (!state.currentSession) return;
+// Rename session functions
+function startEditingSessionName() {
+  if (!state.currentSession || state.currentSession.isDraft) return;
 
-  const isPaused = state.currentSession.status === 'paused';
-  elements.pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
+  elements.sessionName.classList.add('hidden');
+  elements.sessionNameInputInline.classList.remove('hidden');
+  elements.sessionNameInputInline.value = state.currentSession.name || '';
+  elements.sessionNameInputInline.focus();
+  elements.sessionNameInputInline.select();
 }
 
-async function togglePause() {
-  if (!state.currentSession) return;
+function cancelEditingSessionName() {
+  elements.sessionName.classList.remove('hidden');
+  elements.sessionNameInputInline.classList.add('hidden');
+}
 
-  const endpoint = state.currentSession.status === 'paused' ? 'resume' : 'pause';
+async function saveSessionName() {
+  const newName = elements.sessionNameInputInline.value.trim();
+  if (!newName || !state.currentSession) {
+    cancelEditingSessionName();
+    return;
+  }
+
   try {
-    const response = await fetch(`/api/sessions/${state.currentSession.id}/${endpoint}`, {
-      method: 'POST',
+    const response = await fetch(`/api/sessions/${state.currentSession.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
     });
-    const session = await response.json();
-    state.currentSession = session;
 
-    const idx = state.sessions.findIndex(s => s.id === session.id);
-    if (idx >= 0) state.sessions[idx] = session;
-
-    renderSessionSelect();
-    updatePauseButton();
-    updateUIState();
+    if (response.ok) {
+      const updatedSession = await response.json();
+      state.currentSession = updatedSession;
+      const idx = state.sessions.findIndex(s => s.id === updatedSession.id);
+      if (idx >= 0) {
+        state.sessions[idx] = updatedSession;
+      }
+      elements.sessionName.textContent = getSessionDisplayName(updatedSession);
+      renderSessionsList();
+    }
   } catch (err) {
-    console.error('Failed to toggle pause:', err);
+    console.error('Failed to rename session:', err);
+  }
+
+  cancelEditingSessionName();
+}
+
+// Delete session functions
+async function deleteSession() {
+  if (!state.currentSession || state.currentSession.isDraft) return;
+
+  const sessionName = getSessionDisplayName(state.currentSession);
+
+  showConfirmDialog(
+    'Delete Session',
+    `Delete session "${sessionName}"? This cannot be undone.`,
+    async () => {
+      try {
+        const response = await fetch(`/api/sessions/${state.currentSession.id}`, {
+          method: 'DELETE',
+        });
+
+        if (response.ok) {
+          // Remove from sessions list
+          state.sessions = state.sessions.filter(s => s.id !== state.currentSession.id);
+
+          // Unsubscribe and clear current session
+          unsubscribeFromSession(state.currentSession.id);
+          state.currentSession = null;
+
+          // Update UI
+          elements.sessionName.textContent = '';
+          elements.messages.innerHTML = '';
+          renderSessionsList();
+          updateUIState();
+
+          // Clear URL param
+          const url = new URL(window.location);
+          url.searchParams.delete('session');
+          window.history.pushState({}, '', url);
+
+          showCommandFeedback(`Session "${sessionName}" deleted`, 'success');
+        } else {
+          const error = await response.json();
+          showCommandFeedback(error.error || 'Failed to delete session', 'error');
+        }
+      } catch (err) {
+        console.error('Failed to delete session:', err);
+        showCommandFeedback('Failed to delete session', 'error');
+      }
+    }
+  );
+}
+
+// Confirm dialog functions
+function showConfirmDialog(title, message, callback) {
+  elements.confirmTitle.textContent = title;
+  elements.confirmMessage.textContent = message;
+  state.confirmCallback = callback;
+  elements.confirmModal.classList.remove('hidden');
+}
+
+function hideConfirmDialog() {
+  elements.confirmModal.classList.add('hidden');
+  state.confirmCallback = null;
+}
+
+// Search sessions functions
+let searchDebounceTimer = null;
+let isSearching = false;
+
+async function searchSessions(query) {
+  if (!query || query.trim().length === 0) {
+    clearSearch();
+    return;
+  }
+
+  isSearching = true;
+
+  try {
+    const response = await fetch(`/api/sessions/search?q=${encodeURIComponent(query)}`);
+    if (response.ok) {
+      const results = await response.json();
+      renderSearchResults(results);
+    }
+  } catch (err) {
+    console.error('Search failed:', err);
+  }
+}
+
+function renderSearchResults(sessions) {
+  const html = sessions.map(session => {
+    const isActive = state.currentSession?.id === session.id;
+    const statusClass = session.status === 'active' ? 'active' :
+                       session.status === 'paused' ? 'paused' : 'terminated';
+    const displayName = getSessionDisplayName(session);
+
+    return `
+      <div class="session-item${isActive ? ' active' : ''}" data-session-id="${session.id}">
+        <span class="session-status ${statusClass}"></span>
+        <span class="session-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
+      </div>
+    `;
+  }).join('');
+
+  elements.sessionsList.innerHTML = html;
+}
+
+function clearSearch() {
+  isSearching = false;
+  elements.sessionSearch.value = '';
+  renderSessionsList();
+}
+
+function handleSearchInput(e) {
+  const query = e.target.value;
+
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+  }
+
+  if (!query || query.trim().length === 0) {
+    clearSearch();
+    return;
+  }
+
+  searchDebounceTimer = setTimeout(() => {
+    searchSessions(query);
+  }, 300);
+}
+
+function focusSidebarSearch(query = '') {
+  // Expand sidebar if collapsed (on desktop)
+  if (state.sidebarCollapsed && window.innerWidth > 768) {
+    toggleSidebar();
+  }
+  // Open sidebar on mobile
+  if (window.innerWidth <= 768 && !state.sidebarOpen) {
+    openMobileSidebar();
+  }
+  // Small delay to allow sidebar animation to complete
+  setTimeout(() => {
+    elements.sessionSearch.value = query;
+    elements.sessionSearch.focus();
+    if (query) {
+      searchSessions(query);
+    }
+  }, state.sidebarCollapsed ? 0 : 50);
+}
+
+// Export session functions
+async function exportSession(format = 'json') {
+  if (!state.currentSession || state.currentSession.isDraft) {
+    showCommandFeedback('No session to export', 'error');
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/sessions/${state.currentSession.id}/export?format=${format}`);
+    if (!response.ok) {
+      const error = await response.json();
+      showCommandFeedback(error.error || 'Export failed', 'error');
+      return;
+    }
+
+    // Get filename from Content-Disposition header
+    const disposition = response.headers.get('Content-Disposition');
+    let filename = `session.${format === 'markdown' ? 'md' : 'json'}`;
+    if (disposition) {
+      const match = disposition.match(/filename="(.+)"/);
+      if (match) {
+        filename = match[1];
+      }
+    }
+
+    // Download the file
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showCommandFeedback(`Exported as ${format.toUpperCase()}`, 'success');
+  } catch (err) {
+    console.error('Export failed:', err);
+    showCommandFeedback('Export failed', 'error');
   }
 }
 
 async function createSession(name, workingDirectory) {
-  try {
-    // Only include name if provided (non-empty)
-    const body = { workingDirectory };
-    if (name) {
-      body.name = name;
+  // If name is provided, create immediately (legacy behavior for named sessions)
+  if (name) {
+    try {
+      const response = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, workingDirectory }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        alert(error.error || 'Failed to create session');
+        return;
+      }
+
+      const session = await response.json();
+      state.sessions.unshift(session);
+      renderSessionsList();
+      selectSession(session.id);
+    } catch (err) {
+      console.error('Failed to create session:', err);
+      alert('Failed to create session');
     }
+    return;
+  }
 
-    const response = await fetch('/api/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+  // No name provided - create a pending session (defer API call until first message)
+  state.pendingSession = { workingDirectory };
 
-    if (!response.ok) {
-      const error = await response.json();
-      alert(error.error || 'Failed to create session');
-      return;
-    }
+  // Clear current session state
+  if (state.currentSession) {
+    unsubscribeFromSession(state.currentSession.id);
+  }
+  state.currentSession = null;
 
-    const session = await response.json();
-    state.sessions.unshift(session);
-    renderSessionSelect();
-    selectSession(session.id);
-    elements.sessionSelect.value = session.id;
-  } catch (err) {
-    console.error('Failed to create session:', err);
-    alert('Failed to create session');
+  // Show pending session UI
+  elements.sessionName.textContent = '(New Session)';
+  elements.messages.innerHTML = '';
+  renderSessionsList();
+
+  // Clear URL param
+  const url = new URL(window.location);
+  url.searchParams.delete('session');
+  window.history.pushState({}, '', url);
+
+  updateUIState();
+  elements.messageInput.focus();
+
+  // Close mobile sidebar
+  if (state.sidebarOpen) {
+    closeMobileSidebar();
   }
 }
 
@@ -823,9 +1286,8 @@ async function forkSession(localSessionId, projectPath, firstPrompt) {
 
     const session = await response.json();
     state.sessions.unshift(session);
-    renderSessionSelect();
+    renderSessionsList();
     selectSession(session.id);
-    elements.sessionSelect.value = session.id;
     closeImportModal();
   } catch (err) {
     console.error('Failed to fork session:', err);
@@ -917,6 +1379,27 @@ function toggleDirectoryBrowser() {
   }
 }
 
+// Filter directory list based on search term
+function filterDirectoryList(searchTerm) {
+  const items = elements.directoryList.querySelectorAll('.directory-item:not(.parent)');
+  const term = searchTerm.toLowerCase();
+  items.forEach(item => {
+    const name = item.textContent.toLowerCase();
+    item.classList.toggle('hidden', term && !name.includes(term));
+  });
+}
+
+// Handle subdirectory input changes for filtering
+function handleDirectoryInputChange(value) {
+  // Auto-open browser if not open
+  if (elements.directoryBrowser.classList.contains('hidden')) {
+    elements.directoryBrowser.classList.remove('hidden');
+    browseDirectories('');
+  }
+  // Filter after a small delay to allow DOM update
+  setTimeout(() => filterDirectoryList(value), 50);
+}
+
 // Voice recording functions
 async function toggleRecording() {
   if (state.isRecording) {
@@ -930,6 +1413,7 @@ async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     state.mediaRecorder = new MediaRecorder(stream);
+    state.mediaRecorder.stream = stream; // Store reference for cancelRecording
     state.audioChunks = [];
 
     state.mediaRecorder.ondataavailable = (e) => {
@@ -961,9 +1445,42 @@ function stopRecording() {
   updateVoiceButtonState();
 }
 
+function cancelRecording() {
+  if (state.mediaRecorder && state.mediaRecorder.state === 'recording') {
+    // Remove the onstop handler to prevent transcription
+    state.mediaRecorder.onstop = () => {
+      // Just stop the tracks, don't transcribe
+      if (state.mediaRecorder?.stream) {
+        state.mediaRecorder.stream.getTracks().forEach((t) => t.stop());
+      }
+    };
+    state.mediaRecorder.stop();
+  }
+  state.audioChunks = [];
+  state.isRecording = false;
+  updateVoiceButtonState();
+}
+
+function showTranscribingIndicator() {
+  const div = document.createElement('div');
+  div.className = 'message user transcribing-indicator';
+  div.id = 'transcribing-indicator';
+  div.innerHTML = '<div class="message-content">Transcribing<span class="transcribing-dots"></span></div>';
+  elements.messages.appendChild(div);
+  scrollToBottom();
+}
+
+function hideTranscribingIndicator() {
+  const indicator = document.getElementById('transcribing-indicator');
+  if (indicator) {
+    indicator.remove();
+  }
+}
+
 async function transcribeAndSend(audioBlob) {
   state.isTranscribing = true;
   updateVoiceButtonState();
+  showTranscribingIndicator();
 
   const formData = new FormData();
   formData.append('audio', audioBlob, 'voice.webm');
@@ -977,11 +1494,13 @@ async function transcribeAndSend(audioBlob) {
     if (!res.ok) {
       throw new Error(data.error || 'Transcription failed');
     }
+    hideTranscribingIndicator();
     if (data.transcript && data.transcript.trim()) {
       sendMessage(data.transcript.trim());
     }
   } catch (err) {
     console.error('Transcription failed:', err);
+    hideTranscribingIndicator();
     alert('Transcription failed: ' + err.message);
   }
 
@@ -992,18 +1511,21 @@ async function transcribeAndSend(audioBlob) {
 function updateVoiceButtonState() {
   if (state.isRecording) {
     elements.voiceBtn.classList.add('recording');
-    elements.voiceIcon.textContent = '⏹';
+    elements.voiceIcon.textContent = '\u23F9';
     elements.voiceBtn.title = 'Stop recording';
+    elements.voiceCancelBtn.classList.remove('hidden');
   } else if (state.isTranscribing) {
     elements.voiceBtn.classList.remove('recording');
     elements.voiceBtn.classList.add('transcribing');
     elements.voiceIcon.textContent = '...';
     elements.voiceBtn.title = 'Transcribing...';
     elements.voiceBtn.disabled = true;
+    elements.voiceCancelBtn.classList.add('hidden');
   } else {
     elements.voiceBtn.classList.remove('recording', 'transcribing');
-    elements.voiceIcon.textContent = '🎤';
+    elements.voiceIcon.textContent = '\uD83C\uDF99';
     elements.voiceBtn.title = 'Record voice message';
+    elements.voiceCancelBtn.classList.add('hidden');
     // Re-enable based on session state
     const hasSession = !!state.currentSession;
     const isActive = hasSession && state.currentSession.status === 'active';
@@ -1227,10 +1749,114 @@ function cancelQuestionResponse() {
 }
 
 // Slash command handlers
+function handleNewCommand() {
+  elements.newSessionModal.classList.remove('hidden');
+  elements.sessionNameInput.focus();
+}
+
+function handleSwitchCommand(args) {
+  const query = args.trim().toLowerCase();
+  if (!query) {
+    showCommandFeedback('Usage: /switch <name>', 'error');
+    return;
+  }
+
+  // Fuzzy match by name
+  const session = state.sessions.find(s => {
+    const name = getSessionDisplayName(s).toLowerCase();
+    return name.includes(query);
+  });
+
+  if (!session) {
+    showCommandFeedback(`No session matching: ${query}`, 'error');
+    return;
+  }
+
+  selectSession(session.id);
+  showCommandFeedback(`Switched to: ${getSessionDisplayName(session)}`, 'success');
+}
+
+function handleImportCommand() {
+  openImportModal();
+}
+
+async function handleRenameCommand(args) {
+  const newName = args.trim();
+  if (!newName) {
+    showCommandFeedback('Usage: /rename <name>', 'error');
+    return;
+  }
+
+  if (!state.currentSession || state.currentSession.isDraft) {
+    showCommandFeedback('No session to rename', 'error');
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/sessions/${state.currentSession.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    });
+
+    if (response.ok) {
+      const updatedSession = await response.json();
+      state.currentSession = updatedSession;
+      const idx = state.sessions.findIndex(s => s.id === updatedSession.id);
+      if (idx >= 0) {
+        state.sessions[idx] = updatedSession;
+      }
+      elements.sessionName.textContent = getSessionDisplayName(updatedSession);
+      renderSessionsList();
+      showCommandFeedback(`Renamed to: ${newName}`, 'success');
+    } else {
+      const error = await response.json();
+      showCommandFeedback(error.error || 'Rename failed', 'error');
+    }
+  } catch (err) {
+    console.error('Rename failed:', err);
+    showCommandFeedback('Rename failed', 'error');
+  }
+}
+
+function handleDeleteCommand() {
+  deleteSession();
+}
+
+function handleExportCommand(args) {
+  const format = args.trim().toLowerCase();
+  if (format === 'md' || format === 'markdown') {
+    exportSession('markdown');
+  } else {
+    exportSession('json');
+  }
+}
+
+function handleSearchCommand(args) {
+  const query = args.trim();
+  if (!query) {
+    // If no query, just focus the search bar
+    focusSidebarSearch();
+    return;
+  }
+  focusSidebarSearch(query);
+}
+
+function handleAbortCommand() {
+  if (state.isProcessing) {
+    abortMessage();
+    showCommandFeedback('Abort requested', 'success');
+  } else {
+    showCommandFeedback('Nothing to abort', 'error');
+  }
+}
+
 function handleResumeCommand(args) {
   const sessionId = args.trim();
   if (!sessionId) {
-    showCommandFeedback('Usage: /resume <session-id>', 'error');
+    // No ID provided - focus search bar for filtering
+    focusSidebarSearch();
+    showCommandFeedback('Use search to find and select a session', 'success');
     return;
   }
 
@@ -1241,11 +1867,10 @@ function handleResumeCommand(args) {
   }
 
   selectSession(session.id);
-  elements.sessionSelect.value = session.id;
   showCommandFeedback(`Switched to session: ${getSessionDisplayName(session)}`, 'success');
 }
 
-function handleModelCommand(args) {
+async function handleModelCommand(args) {
   const model = args.trim().toLowerCase();
   const validModels = ['sonnet', 'opus', 'haiku'];
 
@@ -1254,6 +1879,31 @@ function handleModelCommand(args) {
     return;
   }
 
+  // Persist model to session if we have one
+  if (state.currentSession) {
+    try {
+      const response = await fetch(`/api/sessions/${state.currentSession.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      if (response.ok) {
+        const updatedSession = await response.json();
+        state.currentSession = updatedSession;
+        // Update in sessions list too
+        const idx = state.sessions.findIndex(s => s.id === updatedSession.id);
+        if (idx >= 0) {
+          state.sessions[idx] = updatedSession;
+        }
+        showCommandFeedback(`Model set to: ${model} (persisted for this session)`, 'success');
+        return;
+      }
+    } catch (err) {
+      console.error('Failed to persist model:', err);
+    }
+  }
+
+  // Fallback to pending model for next message only
   state.pendingModel = model;
   showCommandFeedback(`Next message will use model: ${model}`, 'success');
 }
@@ -1261,6 +1911,51 @@ function handleModelCommand(args) {
 function handlePlanCommand() {
   state.pendingPlanMode = true;
   showCommandFeedback('Plan mode enabled for next message', 'success');
+}
+
+async function handleTeleportCommand() {
+  if (!state.currentSession) {
+    showCommandFeedback('No session selected', 'error');
+    return;
+  }
+
+  if (state.currentSession.isDraft) {
+    showCommandFeedback('Send a message first to create the session', 'error');
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/sessions/${state.currentSession.id}/teleport`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      showCommandFeedback(data.error || 'Failed to get teleport command', 'error');
+      return;
+    }
+
+    // Try to copy to clipboard
+    try {
+      await navigator.clipboard.writeText(data.command);
+      showCommandFeedback('Command copied to clipboard!', 'success');
+    } catch (clipErr) {
+      // Clipboard failed, still show the command
+      console.warn('Clipboard access denied:', clipErr);
+    }
+
+    // Show the command in chat for visibility
+    const message = `**Teleport to terminal:**
+
+\`\`\`bash
+${data.command}
+\`\`\`
+
+_Paste this command in your terminal on the server to continue this session._`;
+
+    appendMessage('assistant', message);
+  } catch (err) {
+    console.error('Teleport failed:', err);
+    showCommandFeedback('Failed to generate teleport command', 'error');
+  }
 }
 
 function showCommandFeedback(message, type) {
@@ -1412,11 +2107,88 @@ function handleAutocompleteKeydown(e) {
   return false;
 }
 
+// Keyboard shortcuts
+function handleKeyboardShortcuts(e) {
+  // Cmd+K / Ctrl+K - focus input with /
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    elements.messageInput.focus();
+    elements.messageInput.value = '/';
+    handleAutocompleteInput();
+  }
+}
+
+// Touch gesture handling for mobile sidebar
+let touchStartX = 0;
+let touchStartY = 0;
+let touchStartTime = 0;
+
+function handleTouchStart(e) {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+  touchStartTime = Date.now();
+}
+
+function handleTouchEnd(e) {
+  const touchEndX = e.changedTouches[0].clientX;
+  const touchEndY = e.changedTouches[0].clientY;
+  const touchEndTime = Date.now();
+
+  const deltaX = touchEndX - touchStartX;
+  const deltaY = touchEndY - touchStartY;
+  const deltaTime = touchEndTime - touchStartTime;
+
+  // Only handle horizontal swipes that are fast enough and primarily horizontal
+  if (Math.abs(deltaX) > 50 && Math.abs(deltaX) > Math.abs(deltaY) * 2 && deltaTime < 300) {
+    if (deltaX > 0 && touchStartX < 30 && !state.sidebarOpen) {
+      // Swipe right from left edge - open sidebar
+      openMobileSidebar();
+    } else if (deltaX < 0 && state.sidebarOpen) {
+      // Swipe left - close sidebar
+      closeMobileSidebar();
+    }
+  }
+}
+
 function setupEventListeners() {
-  elements.sessionSelect.addEventListener('change', (e) => {
-    selectSession(e.target.value);
+  // Sidebar toggle
+  elements.sidebarToggle.addEventListener('click', toggleSidebar);
+
+  // Mobile hamburger
+  elements.hamburgerBtn.addEventListener('click', openMobileSidebar);
+  elements.sidebarOverlay.addEventListener('click', closeMobileSidebar);
+
+  // Sidebar search button (collapsed state) - expands and focuses search
+  elements.sidebarSearchBtn.addEventListener('click', () => {
+    focusSidebarSearch();
   });
 
+  // Sidebar search input
+  elements.sessionSearch.addEventListener('input', handleSearchInput);
+
+  // Sessions list click
+  elements.sessionsList.addEventListener('click', (e) => {
+    const sessionItem = e.target.closest('.session-item');
+    if (sessionItem) {
+      const sessionId = sessionItem.dataset.sessionId;
+      selectSession(sessionId);
+    }
+  });
+
+  // Session name click to edit
+  elements.sessionName.addEventListener('click', startEditingSessionName);
+  elements.sessionNameInputInline.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveSessionName();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEditingSessionName();
+    }
+  });
+  elements.sessionNameInputInline.addEventListener('blur', saveSessionName);
+
+  // New session button
   elements.newSessionBtn.addEventListener('click', () => {
     elements.newSessionModal.classList.remove('hidden');
     elements.sessionNameInput.focus();
@@ -1510,9 +2282,9 @@ function setupEventListeners() {
     handleAutocompleteInput();
   });
 
-  elements.pauseBtn.addEventListener('click', togglePause);
   elements.abortBtn.addEventListener('click', abortMessage);
   elements.voiceBtn.addEventListener('click', toggleRecording);
+  elements.voiceCancelBtn.addEventListener('click', cancelRecording);
 
   // Permission dialog event listeners
   elements.permissionAllow.addEventListener('click', () => respondToPermission(true, false));
@@ -1522,6 +2294,20 @@ function setupEventListeners() {
   // Question dialog event listeners
   elements.questionSubmit.addEventListener('click', submitQuestionResponse);
   elements.questionCancel.addEventListener('click', cancelQuestionResponse);
+
+  // Confirm dialog event listeners
+  elements.confirmOk.addEventListener('click', () => {
+    if (state.confirmCallback) {
+      state.confirmCallback();
+    }
+    hideConfirmDialog();
+  });
+  elements.confirmCancel.addEventListener('click', hideConfirmDialog);
+  elements.confirmModal.addEventListener('click', (e) => {
+    if (e.target === elements.confirmModal) {
+      hideConfirmDialog();
+    }
+  });
 
   elements.newSessionModal.addEventListener('click', (e) => {
     if (e.target === elements.newSessionModal) {
@@ -1562,6 +2348,11 @@ function setupEventListeners() {
   // Directory browser event listeners
   elements.browseBtn.addEventListener('click', toggleDirectoryBrowser);
 
+  // Directory input acts as search/filter bar
+  elements.directoryInput.addEventListener('input', (e) => {
+    handleDirectoryInputChange(e.target.value);
+  });
+
   elements.directoryList.addEventListener('click', handleDirectoryClick);
   elements.directoryList.addEventListener('dblclick', handleDirectoryDblClick);
 
@@ -1574,21 +2365,28 @@ function setupEventListeners() {
     }
   });
 
+  // Keyboard shortcuts
+  document.addEventListener('keydown', handleKeyboardShortcuts);
+
+  // Touch gestures for mobile
+  document.addEventListener('touchstart', handleTouchStart, { passive: true });
+  document.addEventListener('touchend', handleTouchEnd, { passive: true });
+
   // Handle browser back/forward for sessions
   window.addEventListener('popstate', () => {
     const urlParams = new URLSearchParams(window.location.search);
     const sessionId = urlParams.get('session');
     if (sessionId !== state.currentSession?.id) {
-      elements.sessionSelect.value = sessionId || '';
       // Avoid recursive URL updates by directly setting state
       if (!sessionId) {
         if (state.currentSession) {
           unsubscribeFromSession(state.currentSession.id);
         }
         state.currentSession = null;
-        elements.sessionInfo.classList.add('hidden');
+        elements.sessionName.textContent = '';
         elements.messages.innerHTML = '';
         updateUIState();
+        renderSessionsList();
       } else {
         const session = state.sessions.find(s => s.id === sessionId);
         if (session) {
@@ -1597,12 +2395,10 @@ function setupEventListeners() {
           }
           state.currentSession = session;
           elements.sessionName.textContent = getSessionDisplayName(session);
-          elements.sessionDir.textContent = session.workingDirectory;
-          elements.sessionInfo.classList.remove('hidden');
-          updatePauseButton();
           subscribeToSession(sessionId);
           loadMessages(sessionId);
           updateUIState();
+          renderSessionsList();
         }
       }
     }
