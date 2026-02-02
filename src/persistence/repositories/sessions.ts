@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../database.js';
 
+export type ModelType = 'sonnet' | 'opus' | 'haiku';
+
 export interface Session {
   id: string;
   name: string;
@@ -10,6 +12,7 @@ export interface Session {
   createdAt: string;
   lastMessageAt: string | null;
   ownerEmail: string;
+  model: ModelType | null;
 }
 
 interface SessionRow {
@@ -21,6 +24,7 @@ interface SessionRow {
   created_at: string;
   last_message_at: string | null;
   owner_email: string;
+  model: ModelType | null;
 }
 
 function rowToSession(row: SessionRow): Session {
@@ -33,6 +37,7 @@ function rowToSession(row: SessionRow): Session {
     createdAt: row.created_at,
     lastMessageAt: row.last_message_at,
     ownerEmail: row.owner_email,
+    model: row.model,
   };
 }
 
@@ -110,7 +115,7 @@ export function getActiveSessions(ownerEmail?: string): Session[] {
 
 export function updateSession(
   id: string,
-  updates: Partial<Pick<Session, 'name' | 'status' | 'claudeSessionId' | 'lastMessageAt'>>
+  updates: Partial<Pick<Session, 'name' | 'status' | 'claudeSessionId' | 'lastMessageAt' | 'model'>>
 ): Session | null {
   const db = getDatabase();
   const setClauses: string[] = [];
@@ -131,6 +136,10 @@ export function updateSession(
   if (updates.lastMessageAt !== undefined) {
     setClauses.push('last_message_at = ?');
     values.push(updates.lastMessageAt);
+  }
+  if (updates.model !== undefined) {
+    setClauses.push('model = ?');
+    values.push(updates.model);
   }
 
   if (setClauses.length === 0) {

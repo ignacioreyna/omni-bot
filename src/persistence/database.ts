@@ -71,6 +71,13 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_email);
     `,
   },
+  {
+    version: 3,
+    up: `
+      -- Add model column for persisted model selection per session
+      ALTER TABLE sessions ADD COLUMN model TEXT DEFAULT NULL;
+    `,
+  },
 ];
 
 export function initDatabase(): Database.Database {
