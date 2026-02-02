@@ -33,6 +33,12 @@ const configSchema = z.object({
     .string()
     .default('/tmp')
     .transform((val) => val.split(',').map((d) => d.trim()).filter((d) => d.length > 0)),
+  // Directories that can be read but not used as session working directories
+  readableDirectories: z
+    .string()
+    .optional()
+    .default('')
+    .transform((val) => val.split(',').map((d) => d.trim()).filter((d) => d.length > 0)),
   databasePath: z.string().default('./data/omni-bot.db'),
   maxConcurrentSessions: z.coerce.number().int().positive().default(5),
 
@@ -55,6 +61,7 @@ function loadConfig() {
     port: process.env.PORT,
     sessionSecret: process.env.SESSION_SECRET,
     allowedDirectories: process.env.ALLOWED_DIRECTORIES,
+    readableDirectories: process.env.READABLE_DIRECTORIES,
     databasePath: process.env.DATABASE_PATH,
     maxConcurrentSessions: process.env.MAX_CONCURRENT_SESSIONS,
     authMode: process.env.AUTH_MODE,
@@ -85,6 +92,10 @@ function loadConfig() {
     allowedDirectories: result.data.allowedDirectories.map((d) => {
       const expanded = expandPath(d);
       // Only resolve if not already absolute
+      return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
+    }),
+    readableDirectories: result.data.readableDirectories.map((d) => {
+      const expanded = expandPath(d);
       return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
     }),
   };

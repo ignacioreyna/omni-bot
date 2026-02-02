@@ -5,6 +5,7 @@ import * as messagesRepo from '../persistence/repositories/messages.js';
 import { appConfig } from '../config.js';
 import { permissionManager, extractPattern } from '../permissions/manager.js';
 import { generateSessionTitle } from '../utils/title-generator.js';
+import { analyzeAndSelectModel } from '../models/model-router.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface PermissionRequestData {
@@ -205,11 +206,15 @@ export class Coordinator {
 
     if (draft) {
       // This is the first message for a draft session
-      // Generate title and persist the session
-      console.log('[Coordinator] Persisting draft session with first message');
+      // Run title generation and model selection in parallel
+      console.log('[Coordinator] Persisting draft session with first message (parallel Haiku calls)');
 
-      const title = await generateSessionTitle(message);
-      console.log('[Coordinator] Generated title:', title);
+      const [title, selectedModel] = await Promise.all([
+        generateSessionTitle(message),
+        analyzeAndSelectModel(message),
+      ]);
+
+      console.log('[Coordinator] Generated title:', title, 'Model:', selectedModel);
 
       // Persist the session with generated title
       session = sessionsRepo.createSessionWithId(
@@ -219,11 +224,18 @@ export class Coordinator {
         draft.ownerEmail
       );
 
+      // Set model on the newly created session
+      sessionsRepo.updateSession(sessionId, { model: selectedModel });
+      session = sessionsRepo.getSession(sessionId)!;
+
       // Remove from drafts
       this.draftSessions.delete(sessionId);
 
-      // Emit session updated event
+      // Emit session updated event (includes title and model)
       this.emit('sessionUpdated', session);
+
+      // Use selected model for this message
+      options = { ...options, model: selectedModel };
     } else {
       session = sessionsRepo.getSession(sessionId);
     }
@@ -240,6 +252,24 @@ export class Coordinator {
 
     if (claudeProcess?.getIsRunning()) {
       throw new Error('Session is busy processing a message');
+    }
+
+    // Auto-select model if no explicit model in options and session has no persisted model
+    // (only for non-draft sessions - drafts already handled above)
+    if (!options?.model && !session.model) {
+      console.log('[Coordinator] First message, no model set - analyzing with Haiku...');
+      const selectedModel = await analyzeAndSelectModel(message);
+      console.log('[Coordinator] Model router selected:', selectedModel);
+
+      // Persist to session (as if user chose it)
+      sessionsRepo.updateSession(sessionId, { model: selectedModel });
+      session = sessionsRepo.getSession(sessionId)!;
+
+      // Emit session updated event so frontend knows about the model
+      this.emit('sessionUpdated', session);
+
+      // Use for this message
+      options = { ...options, model: selectedModel };
     }
 
     messagesRepo.createMessage(sessionId, 'user', message);
@@ -296,7 +326,30 @@ export class Coordinator {
 
     process.on('result', (result) => {
       if (textBuffer) {
-        messagesRepo.createMessage(sessionId, 'assistant', textBuffer);
+        // Save message with usage metadata for persistence
+        const metadata: Record<string, unknown> = {};
+        if (result.usage) {
+          metadata.usage = result.usage;
+        }
+        if (result.modelUsage) {
+          const modelIds = Object.keys(result.modelUsage);
+          if (modelIds.length > 0) {
+            metadata.model = modelIds[0];
+          }
+        }
+        if (result.total_cost_usd !== undefined) {
+          metadata.total_cost_usd = result.total_cost_usd;
+        }
+        if (result.duration_ms !== undefined) {
+          metadata.duration_ms = result.duration_ms;
+        }
+
+        messagesRepo.createMessage(
+          sessionId,
+          'assistant',
+          textBuffer,
+          Object.keys(metadata).length > 0 ? metadata : undefined
+        );
         textBuffer = '';
       }
 
@@ -362,6 +415,36 @@ export class Coordinator {
     }
     sessionsRepo.updateSession(sessionId, { status: 'terminated' });
     return true;
+  }
+
+  /**
+   * Delete a session and all its messages permanently.
+   */
+  deleteSession(sessionId: string): boolean {
+    // Terminate any active process first
+    const process = this.activeSessions.get(sessionId);
+    if (process) {
+      process.abort();
+      this.activeSessions.delete(sessionId);
+    }
+
+    // Cancel any pending permission requests for this session
+    permissionManager.cancelAllForSession(sessionId);
+
+    // Cancel any pending questions for this session
+    for (const [id, pending] of this.pendingQuestions.entries()) {
+      if (pending.sessionId === sessionId) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Session deleted'));
+        this.pendingQuestions.delete(id);
+      }
+    }
+
+    // Delete messages first (foreign key constraint)
+    messagesRepo.deleteMessagesForSession(sessionId);
+
+    // Delete the session
+    return sessionsRepo.deleteSession(sessionId);
   }
 
   private handlePermissionRequest(
@@ -471,6 +554,31 @@ export class Coordinator {
   isSessionBusy(sessionId: string): boolean {
     const process = this.activeSessions.get(sessionId);
     return process?.getIsRunning() ?? false;
+  }
+
+  /**
+   * Update session properties (model, name, etc).
+   */
+  updateSession(
+    sessionId: string,
+    updates: { model?: 'sonnet' | 'opus' | 'haiku'; name?: string }
+  ): sessionsRepo.Session | null {
+    // Don't allow updating draft sessions
+    if (this.draftSessions.has(sessionId)) {
+      return null;
+    }
+    return sessionsRepo.updateSession(sessionId, updates);
+  }
+
+  /**
+   * Update session model preference.
+   * @deprecated Use updateSession instead
+   */
+  updateSessionModel(
+    sessionId: string,
+    updates: { model?: 'sonnet' | 'opus' | 'haiku' }
+  ): sessionsRepo.Session | null {
+    return this.updateSession(sessionId, updates);
   }
 
   abortSession(sessionId: string): void {

@@ -8,54 +8,85 @@
 </head>
 <body>
   <div id="app">
-    <header>
-      <h1>Omni-Bot</h1>
-      <div class="header-controls">
-        <select id="session-select">
-          <option value="">Select session...</option>
-        </select>
-        <button id="new-session-btn" class="btn">+ New</button>
-        <button id="import-session-btn" class="btn">Import</button>
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <button id="sidebar-toggle" class="sidebar-toggle" title="Collapse sidebar">
+        <span class="toggle-icon">&laquo;</span>
+      </button>
+      <button id="new-session-btn" class="sidebar-btn" title="New Session">
+        <span class="sidebar-btn-icon">+</span>
+        <span class="sidebar-btn-text">New</span>
+      </button>
+      <button id="sidebar-search-btn" class="sidebar-btn sidebar-search-btn-collapsed" title="Search sessions">
+        <span class="sidebar-btn-icon">&#128269;</span>
+      </button>
+      <div id="sidebar-search-container" class="sidebar-search-container">
+        <input type="text" id="session-search" placeholder="Search sessions..." class="sidebar-search-input">
       </div>
-    </header>
-
-    <div id="session-info" class="hidden">
-      <span id="session-name"></span>
-      <span id="session-dir"></span>
-      <div class="session-actions">
-        <button id="pause-btn" class="btn btn-small">Pause</button>
-        <button id="abort-btn" class="btn btn-small btn-danger hidden">Abort</button>
+      <div class="sidebar-divider"></div>
+      <div id="sessions-list" class="sessions-list">
+        <!-- Sessions will be rendered here -->
       </div>
-    </div>
+      <div id="sidebar-user" class="sidebar-user">
+        <span class="user-avatar">U</span>
+        <span class="user-email-text"></span>
+      </div>
+    </aside>
 
-    <main id="chat-container">
-      <div id="messages"></div>
-      <div id="streaming-message" class="message assistant hidden">
-        <div class="message-content">
-          <div id="streaming-text"></div>
-          <div id="streaming-tools" class="tools-container collapsed">
-            <div class="tools-toggle">
-              <span class="tools-icon">⚡</span>
-              <span class="tools-count">0 tools used</span>
+    <!-- Sidebar overlay for mobile -->
+    <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+
+    <!-- Main content area -->
+    <div id="main-content" class="main-content">
+      <header>
+        <button id="hamburger-btn" class="hamburger-btn" title="Open menu">
+          <span>&#9776;</span>
+        </button>
+        <h1>Omni-Bot</h1>
+        <div class="header-session">
+          <span id="session-name" class="session-name-header"></span>
+          <input type="text" id="session-name-input-inline" class="session-name-edit hidden" placeholder="Session name">
+        </div>
+        <div class="header-actions">
+          <button id="import-session-btn" class="btn" title="Import local session">Import</button>
+        </div>
+      </header>
+
+      <main id="chat-container">
+        <div id="messages"></div>
+        <div id="streaming-message" class="message assistant hidden">
+          <div class="message-content">
+            <div id="streaming-text"></div>
+            <div id="streaming-tools" class="tools-container collapsed">
+              <div class="tools-toggle">
+                <span class="tools-icon">&#9889;</span>
+                <span class="tools-count">0 tools used</span>
+              </div>
+              <div class="tools-list"></div>
             </div>
-            <div class="tools-list"></div>
           </div>
         </div>
-      </div>
-    </main>
+      </main>
 
-    <footer>
-      <div id="autocomplete-container" class="autocomplete-container hidden">
-        <div id="autocomplete-list" class="autocomplete-list"></div>
-      </div>
-      <form id="message-form">
-        <textarea id="message-input" placeholder="Type a message..." rows="1" disabled></textarea>
-        <button type="button" id="voice-btn" class="btn" title="Record voice message" disabled>
-          <span id="voice-icon">🎤</span>
-        </button>
-        <button type="submit" id="send-btn" disabled>Send</button>
-      </form>
-    </footer>
+      <!-- Floating abort button -->
+      <button id="abort-btn" class="floating-abort-btn hidden" title="Abort">Abort</button>
+
+      <footer>
+        <div id="autocomplete-container" class="autocomplete-container hidden">
+          <div id="autocomplete-list" class="autocomplete-list"></div>
+        </div>
+        <form id="message-form">
+          <textarea id="message-input" placeholder="Type /cmd or message..." rows="1" disabled></textarea>
+          <button type="button" id="voice-btn" class="btn" title="Record voice message" disabled>
+            <span id="voice-icon">&#127908;</span>
+          </button>
+          <button type="button" id="voice-cancel-btn" class="btn btn-danger hidden" title="Cancel recording">
+            &#10005;
+          </button>
+          <button type="submit" id="send-btn" disabled>Send</button>
+        </form>
+      </footer>
+    </div>
 
     <div id="new-session-modal" class="modal hidden">
       <div class="modal-content">
@@ -129,6 +160,17 @@
         <div class="question-actions">
           <button type="button" id="question-cancel" class="btn btn-danger">Cancel</button>
           <button type="button" id="question-submit" class="btn btn-primary">Submit</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="confirm-modal" class="modal hidden">
+      <div class="modal-content confirm-modal-content">
+        <h2 id="confirm-title">Confirm</h2>
+        <p id="confirm-message"></p>
+        <div class="modal-actions">
+          <button type="button" id="confirm-cancel" class="btn">Cancel</button>
+          <button type="button" id="confirm-ok" class="btn btn-danger">Delete</button>
         </div>
       </div>
     </div>
