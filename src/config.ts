@@ -3,11 +3,12 @@ import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 
 config();
 
 // Expand ~ and $HOME in paths
-function expandPath(p: string): string {
+export function expandPath(p: string): string {
   let expanded = p;
 
   // Expand ~ at start of path
@@ -86,18 +87,29 @@ function loadConfig() {
     }
   }
 
+  const allowedDirectories = result.data.allowedDirectories.map((d) => {
+    const expanded = expandPath(d);
+    return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
+  });
+
+  const readableDirectories = result.data.readableDirectories.map((d) => {
+    const expanded = expandPath(d);
+    return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
+  });
+
+  // Auto-detect Conductor workspaces directory
+  const conductorWorkspacesPath = path.join(os.homedir(), 'conductor', 'workspaces');
+  const conductorAvailable = fs.existsSync(conductorWorkspacesPath);
+  if (conductorAvailable && !allowedDirectories.includes(conductorWorkspacesPath)) {
+    allowedDirectories.push(conductorWorkspacesPath);
+  }
+
   return {
     ...result.data,
     databasePath: path.resolve(expandPath(result.data.databasePath)),
-    allowedDirectories: result.data.allowedDirectories.map((d) => {
-      const expanded = expandPath(d);
-      // Only resolve if not already absolute
-      return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
-    }),
-    readableDirectories: result.data.readableDirectories.map((d) => {
-      const expanded = expandPath(d);
-      return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
-    }),
+    allowedDirectories,
+    readableDirectories,
+    conductorWorkspacesPath: conductorAvailable ? conductorWorkspacesPath : null,
   };
 }
 
