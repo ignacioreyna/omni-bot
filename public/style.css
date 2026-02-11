@@ -1922,3 +1922,139 @@ footer::before {
 .sidebar-btn {
   position: relative;
 }
+
+/* Workspace picker tabs */
+.workspace-picker-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-tab {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-family: 'Fira Code', monospace;
+  font-size: 0.8rem;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.workspace-tab:hover {
+  color: var(--text-primary);
+}
+
+.workspace-tab.active {
+  border-bottom-color: var(--green-glow);
+  color: var(--green-glow);
+}
+
+/* Conductor workspace list */
+.conductor-workspaces {
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.conductor-repo {
+  margin-bottom: 8px;
+}
+
+.conductor-repo-header {
+  font-weight: 600;
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-family: 'Fira Code', monospace;
+  user-select: none;
+}
+
+.conductor-repo-header:hover {
+  background: var(--bg-elevated);
+}
+
+.conductor-repo-header .repo-count {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+.conductor-repo-header .collapse-icon {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  transition: transform 0.15s;
+}
+
+.conductor-repo-header.collapsed .collapse-icon {
+  transform: rotate(-90deg);
+}
+
+.conductor-worktree-list {
+  padding-left: 12px;
+  padding-top: 4px;
+}
+
+.conductor-worktree-list.hidden {
+  display: none;
+}
+
+.conductor-worktree {
+  padding: 10px 12px;
+  margin: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.conductor-worktree:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--green-dim);
+  box-shadow: var(--glow-soft);
+}
+
+.conductor-worktree-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  margin-bottom: 2px;
+}
+
+.conductor-worktree-branch {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-family: 'Fira Code', monospace;
+}
+
+.conductor-worktree-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: 'Fira Code', monospace;
+}
+
+.conductor-status-clean {
+  color: var(--green-muted);
+}
+
+.conductor-status-dirty {
+  color: var(--warning);
+}
+
+.conductor-empty,
+.conductor-loading {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 24px;
+  font-size: 0.85rem;
+}

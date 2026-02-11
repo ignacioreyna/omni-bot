@@ -5,6 +5,7 @@ import sessionsRouter from './routes/sessions.js';
 import messagesRouter from './routes/messages.js';
 import authRouter from './routes/auth.js';
 import localSessionsRouter from './routes/local-sessions.js';
+import conductorRouter from './routes/conductor.js';
 import { cfAccessMiddleware } from './middleware/cf-access.js';
 import { appConfig } from '../config.js';
 
@@ -30,6 +31,7 @@ export function createApp(): express.Application {
   app.use('/api/sessions', cfAccessMiddleware, sessionsRouter);
   app.use('/api/messages', cfAccessMiddleware, messagesRouter);
   app.use('/api/local-sessions', cfAccessMiddleware, localSessionsRouter);
+  app.use('/api/conductor', cfAccessMiddleware, conductorRouter);
 
   app.get('*', (_req: Request, res: Response) => {
     res.sendFile(path.join(__dirname, '../../public/index.html'));

@@ -95,21 +95,37 @@
           <label for="session-name-input">Name (optional)</label>
           <input type="text" id="session-name-input" placeholder="Auto-generated from first message">
 
-          <label for="directory-select">Working Directory</label>
-          <select id="directory-select" required></select>
-
-          <label for="directory-input">Subdirectory</label>
-          <div class="subdir-input-row">
-            <input type="text" id="directory-input" placeholder="Subdirectory (optional)">
-            <button type="button" id="browse-btn" class="btn">Browse</button>
-          </div>
-          <div id="directory-browser" class="directory-browser hidden">
-            <div id="directory-list"></div>
+          <div id="workspace-picker-tabs" class="workspace-picker-tabs hidden">
+            <button type="button" class="workspace-tab active" data-mode="browse">Browse</button>
+            <button type="button" class="workspace-tab" data-mode="conductor">Conductor</button>
           </div>
 
-          <div class="modal-actions">
+          <div id="browse-mode-content">
+            <label for="directory-select">Working Directory</label>
+            <select id="directory-select" required></select>
+
+            <label for="directory-input">Subdirectory</label>
+            <div class="subdir-input-row">
+              <input type="text" id="directory-input" placeholder="Subdirectory (optional)">
+              <button type="button" id="browse-btn" class="btn">Browse</button>
+            </div>
+            <div id="directory-browser" class="directory-browser hidden">
+              <div id="directory-list"></div>
+            </div>
+          </div>
+
+          <div id="conductor-mode-content" class="hidden">
+            <div id="conductor-workspaces-list" class="conductor-workspaces"></div>
+            <div id="conductor-empty" class="conductor-empty hidden">No Conductor workspaces found.</div>
+            <div id="conductor-loading" class="conductor-loading hidden">Scanning workspaces...</div>
+          </div>
+
+          <div id="browse-modal-actions" class="modal-actions">
             <button type="button" id="cancel-modal-btn" class="btn">Cancel</button>
             <button type="submit" class="btn btn-primary">Create</button>
+          </div>
+          <div id="conductor-modal-actions" class="modal-actions hidden">
+            <button type="button" id="cancel-conductor-btn" class="btn">Cancel</button>
           </div>
         </form>
       </div>
