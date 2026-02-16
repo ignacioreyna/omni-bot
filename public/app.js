@@ -32,6 +32,10 @@ const state = {
   importBrowsePath: '',
   // Confirm dialog callback
   confirmCallback: null,
+  // Conductor workspace state
+  conductorAvailable: false,
+  conductorWorkspaces: [],
+  conductorLoaded: false,
 };
 
 // Slash commands definition
@@ -206,6 +210,7 @@ async function init() {
 
   await loadSessions();
   await loadAllowedDirectories();
+  await checkConductorAvailable();
 
   // Get WS token if in cloudflare mode
   if (state.authMode === 'cloudflare') {
@@ -337,6 +342,128 @@ async function loadAllowedDirectories() {
       .join('');
   } catch (err) {
     console.error('Failed to load directories:', err);
+  }
+}
+
+async function checkConductorAvailable() {
+  try {
+    const res = await fetch('/api/conductor/available');
+    const data = await res.json();
+    state.conductorAvailable = data.available;
+    if (state.conductorAvailable) {
+      document.getElementById('workspace-picker-tabs').classList.remove('hidden');
+    }
+  } catch {
+    state.conductorAvailable = false;
+  }
+}
+
+async function loadConductorWorkspaces() {
+  if (!state.conductorAvailable || state.conductorLoaded) return;
+
+  const loading = document.getElementById('conductor-loading');
+  const empty = document.getElementById('conductor-empty');
+  const list = document.getElementById('conductor-workspaces-list');
+
+  loading.classList.remove('hidden');
+  empty.classList.add('hidden');
+  list.innerHTML = '';
+
+  try {
+    const res = await fetch('/api/conductor/workspaces');
+    state.conductorWorkspaces = await res.json();
+    state.conductorLoaded = true;
+    renderConductorWorkspaces();
+  } catch (err) {
+    console.error('Failed to load Conductor workspaces:', err);
+    empty.textContent = 'Failed to load workspaces.';
+    empty.classList.remove('hidden');
+  } finally {
+    loading.classList.add('hidden');
+  }
+}
+
+function formatRelativeTime(dateStr) {
+  const now = Date.now();
+  const date = new Date(dateStr).getTime();
+  const diff = now - date;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
+function renderConductorWorkspaces() {
+  const list = document.getElementById('conductor-workspaces-list');
+  const empty = document.getElementById('conductor-empty');
+
+  if (state.conductorWorkspaces.length === 0) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+
+  list.innerHTML = state.conductorWorkspaces.map(repo => {
+    const worktreesHtml = repo.worktrees.map(wt => {
+      const statusIcon = wt.status === 'clean' ? '\u2713' : '\u2731';
+      const statusClass = wt.status === 'clean' ? 'conductor-status-clean' : 'conductor-status-dirty';
+      const commitInfo = wt.lastCommit
+        ? `${wt.lastCommit.hash} \u00b7 ${formatRelativeTime(wt.lastCommit.date)}`
+        : 'no commits';
+
+      return `
+        <div class="conductor-worktree" data-workspace-path="${escapeHtml(wt.path)}">
+          <div class="conductor-worktree-name">${escapeHtml(wt.worktreeName)}</div>
+          <div class="conductor-worktree-branch">${escapeHtml(wt.branch)}</div>
+          <div class="conductor-worktree-meta">
+            <span class="${statusClass}">${statusIcon} ${wt.status}</span>
+            <span>${commitInfo}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="conductor-repo">
+        <div class="conductor-repo-header">
+          <span class="collapse-icon">\u25BC</span>
+          ${escapeHtml(repo.repoName)}
+          <span class="repo-count">(${repo.worktrees.length})</span>
+        </div>
+        <div class="conductor-worktree-list">
+          ${worktreesHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function switchWorkspacePickerMode(mode) {
+  document.querySelectorAll('.workspace-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+
+  const browseContent = document.getElementById('browse-mode-content');
+  const conductorContent = document.getElementById('conductor-mode-content');
+  const browseActions = document.getElementById('browse-modal-actions');
+  const conductorActions = document.getElementById('conductor-modal-actions');
+
+  browseContent.classList.toggle('hidden', mode !== 'browse');
+  conductorContent.classList.toggle('hidden', mode !== 'conductor');
+  browseActions.classList.toggle('hidden', mode !== 'browse');
+  conductorActions.classList.toggle('hidden', mode !== 'conductor');
+
+  // Disable directory-select required when in conductor mode
+  elements.directorySelect.required = mode === 'browse';
+
+  if (mode === 'conductor' && !state.conductorLoaded) {
+    loadConductorWorkspaces();
   }
 }
 
@@ -2432,6 +2559,39 @@ function setupEventListeners() {
     elements.newSessionForm.reset();
     elements.directoryBrowser.classList.add('hidden');
     state.browsePath = '';
+  });
+
+  // Workspace picker tabs
+  document.querySelectorAll('.workspace-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchWorkspacePickerMode(btn.dataset.mode));
+  });
+
+  // Conductor workspace selection
+  document.getElementById('conductor-workspaces-list').addEventListener('click', (e) => {
+    const worktree = e.target.closest('.conductor-worktree');
+    if (worktree) {
+      const workspacePath = worktree.dataset.workspacePath;
+      const name = elements.sessionNameInput.value.trim();
+      createSession(name, workspacePath);
+      elements.newSessionModal.classList.add('hidden');
+      elements.newSessionForm.reset();
+      switchWorkspacePickerMode('browse');
+      return;
+    }
+
+    const repoHeader = e.target.closest('.conductor-repo-header');
+    if (repoHeader) {
+      repoHeader.classList.toggle('collapsed');
+      const list = repoHeader.nextElementSibling;
+      list.classList.toggle('hidden');
+    }
+  });
+
+  // Conductor cancel button
+  document.getElementById('cancel-conductor-btn').addEventListener('click', () => {
+    elements.newSessionModal.classList.add('hidden');
+    elements.newSessionForm.reset();
+    switchWorkspacePickerMode('browse');
   });
 
   elements.messageForm.addEventListener('submit', (e) => {

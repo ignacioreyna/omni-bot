@@ -12,6 +12,9 @@ Omni-Bot is a self-hosted web application that provides remote access to Claude 
 Browser → Express + WebSocket → Coordinator → claude CLI (child process)
                                     ↓
                                  SQLite
+
+With Wake Server:
+Internet → CF Tunnel → Wake Server (:3000) --proxy--> Omni-Bot (:3001)
 ```
 
 - **Express**: HTTP server with REST API and static file serving
@@ -53,6 +56,8 @@ Environment variables (see `.env.example`):
 src/
 ├── index.ts                 # Entry point
 ├── config.ts                # Env config with Zod
+├── shared/
+│   └── cf-jwt.ts            # Shared CF Access JWT validation
 ├── server/
 │   ├── app.ts               # Express setup
 │   ├── websocket.ts         # WebSocket handler
@@ -65,9 +70,15 @@ src/
 ├── persistence/
 │   ├── database.ts          # SQLite setup
 │   └── repositories/        # Data access
-└── lifecycle/
-    ├── startup.ts           # Initialization
-    └── shutdown.ts          # Graceful shutdown
+├── lifecycle/
+│   ├── startup.ts           # Initialization
+│   └── shutdown.ts          # Graceful shutdown
+└── wake/
+    ├── index.ts             # Wake server entry point
+    ├── wake-config.ts       # Minimal config (no SQLite deps)
+    ├── wake-server.ts       # Express + reverse proxy
+    ├── process-manager.ts   # Omni-Bot lifecycle (start/stop)
+    └── status-page.ts       # Inline HTML status UI
 ```
 
 ## API
@@ -108,8 +119,6 @@ We use the **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) instead of sp
 - Spawning from Node.js provides pipes, not a TTY
 - Attempts to fake TTY (node-pty, script command, unbuffer) all fail for various reasons
 - The SDK handles all TTY complexity internally and provides a clean async generator API
-
-Key reference: See `claudegram` project for SDK usage patterns.
 
 ### SDK Streaming Behavior
 
@@ -438,6 +447,39 @@ pm2 startup
 
 ### Docker (Optional)
 See `docs/INSTALLATION.md` for Dockerfile example.
+
+### Wake Server (Remote Control)
+
+The wake server is a lightweight always-on HTTP server that sits behind the Cloudflare Tunnel and can start/stop the main Omni-Bot server remotely.
+
+```bash
+# Development
+make wake          # or: npm run wake:dev
+
+# Production
+npm run build
+make wake-start    # or: npm run wake:start
+```
+
+The wake server listens on PORT (default 3000) and proxies to Omni-Bot on OMNI_BOT_PORT (default 3001). When Omni-Bot is down, it shows a status page with start/stop controls at `/wake`.
+
+**Endpoints:**
+- `GET /wake` — Status UI page
+- `GET /wake/health` — Health check (no auth)
+- `GET /wake/status` — JSON status
+- `POST /wake/start` — Start Omni-Bot
+- `POST /wake/stop` — Stop Omni-Bot
+- `POST /wake/restart` — Restart Omni-Bot
+- `GET /wake/logs?lines=100` — Tail of Omni-Bot logs
+
+**launchd (auto-start on boot):**
+```bash
+cp support/com.omni-bot.wake.plist ~/Library/LaunchAgents/
+# Edit WorkingDirectory and node path in the plist
+launchctl load ~/Library/LaunchAgents/com.omni-bot.wake.plist
+```
+
+The cloudflared tunnel should be managed separately (its own launchd service).
 
 ## Monitoring
 
