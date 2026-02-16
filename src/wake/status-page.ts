@@ -45,6 +45,9 @@ export function renderStatusPage(status: OmniBotStatus): string {
     .btn-restart:hover:not(:disabled){background:#388bfd}
     .btn-rebuild{background:#d29922;color:#fff;border-color:#e3b341}
     .btn-rebuild:hover:not(:disabled){background:#e3b341}
+    .btn-pull{background:#8b949e;color:#fff;border-color:#a1aab4}
+    .btn-pull:hover:not(:disabled){background:#a1aab4}
+    .divider{width:100%;border:none;border-top:1px solid #30363d;margin:.75rem 0}
     .msg{font-size:.85rem;margin-top:1rem;min-height:1.2rem}
     .msg.error{color:#f85149}
     .msg.info{color:#58a6ff}
@@ -71,6 +74,8 @@ export function renderStatusPage(status: OmniBotStatus): string {
       <button class="btn-stop" id="btn-stop" onclick="action('stop')" ${!isRunning ? 'disabled' : ''}>Stop</button>
       <button class="btn-restart" id="btn-restart" onclick="action('restart')">Restart</button>
       <button class="btn-rebuild" id="btn-rebuild" onclick="action('rebuild')">Rebuild & Restart</button>
+      <hr class="divider">
+      <button class="btn-pull" id="btn-pull" onclick="action('pull')">Git Pull</button>
     </div>
     <div class="spinner" id="spinner"></div>
     <div class="msg" id="msg">${status.lastError ? '<span class="error">Last error: ' + escapeHtml(status.lastError) + '</span>' : ''}</div>
@@ -86,7 +91,10 @@ export function renderStatusPage(status: OmniBotStatus): string {
         const res=await fetch('/wake/'+name,{method:'POST'});
         const data=await res.json();
         if(!res.ok)throw new Error(data.error||'Failed');
-        if(name==='start'||name==='restart'||name==='rebuild'){
+        if(name==='pull'){
+          msg.innerHTML='<span class="info">'+(data.output||'Up to date')+'</span>';
+          document.querySelectorAll('button').forEach(b=>b.disabled=false);
+        }else if(name==='start'||name==='restart'||name==='rebuild'){
           msg.innerHTML='<span class="info">Redirecting...</span>';
           setTimeout(()=>{window.location.href='/';},1500);
         }else{
