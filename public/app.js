@@ -1554,13 +1554,17 @@ async function forkSession(localSessionId, projectPath, firstPrompt) {
     : 'Imported session';
   const name = baseName || 'Imported session';
 
-  // Show loading feedback
-  const importModal = document.getElementById('import-session-modal');
-  const overlay = importModal?.querySelector('.modal-overlay') || importModal;
-  if (overlay) overlay.style.opacity = '0.5';
-  if (overlay) overlay.style.pointerEvents = 'none';
+  // Show loading feedback on modal content
+  const modalContent = document.querySelector('#import-session-modal .modal-content');
+  if (modalContent) {
+    modalContent.style.opacity = '0.5';
+    modalContent.style.pointerEvents = 'none';
+  }
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
     const response = await fetch('/api/sessions/fork', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1569,11 +1573,13 @@ async function forkSession(localSessionId, projectPath, firstPrompt) {
         workingDirectory: projectPath,
         localSessionId,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const error = await response.json();
-      alert(error.error || 'Failed to fork session');
+      alert(error.error || 'Failed to import session');
       return;
     }
 
@@ -1584,10 +1590,15 @@ async function forkSession(localSessionId, projectPath, firstPrompt) {
     closeImportModal();
   } catch (err) {
     console.error('Failed to fork session:', err);
-    alert('Failed to fork session');
+    const msg = err.name === 'AbortError'
+      ? 'Import timed out. The server may be busy.'
+      : 'Failed to import session';
+    alert(msg);
   } finally {
-    if (overlay) overlay.style.opacity = '';
-    if (overlay) overlay.style.pointerEvents = '';
+    if (modalContent) {
+      modalContent.style.opacity = '';
+      modalContent.style.pointerEvents = '';
+    }
   }
 }
 

@@ -298,71 +298,73 @@ function parseSessionFromJsonl(
   jsonlPath: string,
   fallbackPath: string
 ): LocalSession | null {
-  let fd: number;
+  let stat: fs.Stats;
   try {
-    fd = fs.openSync(jsonlPath, 'r');
+    stat = fs.statSync(jsonlPath);
   } catch {
     return null;
   }
 
+  let content: string;
   try {
-    const buf = Buffer.alloc(32 * 1024);
-    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
-    const chunk = buf.toString('utf-8', 0, bytesRead);
-    const lines = chunk.split('\n');
-
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(jsonlPath);
-    } catch {
-      return null;
-    }
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-
-      let entry: JsonlFallbackEntry;
-      try {
-        entry = JSON.parse(line) as JsonlFallbackEntry;
-      } catch {
-        continue;
-      }
-
-      if (entry.type !== 'user' || !entry.message) continue;
-
-      // Prefer cwd from the entry (accurate), fall back to decoded dir name
-      const projectPath = entry.cwd || fallbackPath;
-      const projectName = path.basename(projectPath);
-
-      const content = entry.message.content;
-      let firstPrompt = '';
-
-      if (typeof content === 'string') {
-        firstPrompt = cleanSystemTags(content).slice(0, 200);
-      } else if (Array.isArray(content)) {
-        firstPrompt = content
-          .filter((b) => b.type === 'text' && b.text)
-          .map((b) => b.text as string)
-          .join('\n')
-          .slice(0, 200);
-      }
-
-      return {
-        sessionId: entry.sessionId || path.basename(jsonlPath, '.jsonl'),
-        firstPrompt,
-        messageCount: 0,
-        created: entry.timestamp || stat.birthtime.toISOString(),
-        modified: stat.mtime.toISOString(),
-        gitBranch: entry.gitBranch || '',
-        projectPath,
-        projectName,
-      };
-    }
-
+    content = fs.readFileSync(jsonlPath, 'utf-8');
+  } catch {
     return null;
-  } finally {
-    fs.closeSync(fd);
   }
+
+  const lines = content.split('\n');
+
+  // Count user+assistant entries for messageCount
+  let messageCount = 0;
+  for (const line of lines) {
+    if (line.includes('"type":"user"') || line.includes('"type":"assistant"')) {
+      messageCount++;
+    }
+  }
+
+  // Find first user entry for metadata
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    let entry: JsonlFallbackEntry;
+    try {
+      entry = JSON.parse(line) as JsonlFallbackEntry;
+    } catch {
+      continue;
+    }
+
+    if (entry.type !== 'user' || !entry.message) continue;
+
+    // Prefer cwd from the entry (accurate), fall back to decoded dir name
+    const projectPath = entry.cwd || fallbackPath;
+    const projectName = path.basename(projectPath);
+
+    const msgContent = entry.message.content;
+    let firstPrompt = '';
+
+    if (typeof msgContent === 'string') {
+      firstPrompt = cleanSystemTags(msgContent).slice(0, 200);
+    } else if (Array.isArray(msgContent)) {
+      firstPrompt = msgContent
+        .filter((b) => b.type === 'text' && b.text)
+        .map((b) => b.text as string)
+        .join('\n')
+        .slice(0, 200);
+    }
+
+    return {
+      sessionId: entry.sessionId || path.basename(jsonlPath, '.jsonl'),
+      firstPrompt,
+      messageCount,
+      created: entry.timestamp || stat.birthtime.toISOString(),
+      modified: stat.mtime.toISOString(),
+      gitBranch: entry.gitBranch || '',
+      projectPath,
+      projectName,
+    };
+  }
+
+  return null;
 }
 
 interface JsonlFallbackEntry {
