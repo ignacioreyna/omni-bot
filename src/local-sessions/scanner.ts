@@ -99,7 +99,8 @@ function forEachProject(callback: (data: ProjectData) => void): void {
       const sessions = scanJsonlFallback(projectDir, dir);
       if (sessions.length === 0) continue;
 
-      const projectPath = decodeProjectDir(dir);
+      // Use projectPath from the first session (derived from cwd in JSONL)
+      const projectPath = sessions[0].projectPath;
       const projectName = path.basename(projectPath);
       callback({ projectPath, projectName, sessions });
     }
@@ -277,13 +278,12 @@ function scanJsonlFallback(projectDir: string, dirName: string): LocalSession[] 
     return [];
   }
 
-  const projectPath = decodeProjectDir(dirName);
-  const projectName = path.basename(projectPath);
+  const fallbackPath = decodeProjectDir(dirName);
   const sessions: LocalSession[] = [];
 
   for (const file of files) {
     const jsonlPath = path.join(projectDir, file);
-    const session = parseSessionFromJsonl(jsonlPath, projectPath, projectName);
+    const session = parseSessionFromJsonl(jsonlPath, fallbackPath);
     if (session) sessions.push(session);
   }
 
@@ -296,8 +296,7 @@ function scanJsonlFallback(projectDir: string, dirName: string): LocalSession[] 
  */
 function parseSessionFromJsonl(
   jsonlPath: string,
-  projectPath: string,
-  projectName: string
+  fallbackPath: string
 ): LocalSession | null {
   let fd: number;
   try {
@@ -330,6 +329,10 @@ function parseSessionFromJsonl(
       }
 
       if (entry.type !== 'user' || !entry.message) continue;
+
+      // Prefer cwd from the entry (accurate), fall back to decoded dir name
+      const projectPath = entry.cwd || fallbackPath;
+      const projectName = path.basename(projectPath);
 
       const content = entry.message.content;
       let firstPrompt = '';
@@ -367,6 +370,7 @@ interface JsonlFallbackEntry {
   sessionId?: string;
   timestamp?: string;
   gitBranch?: string;
+  cwd?: string;
   message?: {
     role?: string;
     content?: string | Array<{ type: string; text?: string }>;

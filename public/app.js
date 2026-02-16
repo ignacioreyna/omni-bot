@@ -30,6 +30,7 @@ const state = {
   // Import modal state
   importMode: 'recent',
   importBrowsePath: '',
+  allowedDirectories: [],
   // Confirm dialog callback
   confirmCallback: null,
   // Conductor workspace state
@@ -337,6 +338,7 @@ async function loadAllowedDirectories() {
   try {
     const response = await fetch('/api/sessions/allowed-directories');
     const directories = await response.json();
+    state.allowedDirectories = directories;
     elements.directorySelect.innerHTML = directories
       .map(dir => `<option value="${dir}">${dir}</option>`)
       .join('');
@@ -1372,6 +1374,7 @@ async function loadImportAllowedDirectories() {
   try {
     const response = await fetch('/api/sessions/allowed-directories');
     const directories = await response.json();
+    state.allowedDirectories = directories;
     elements.importDirectorySelect.innerHTML = directories
       .map(dir => `<option value="${dir}">${dir}</option>`)
       .join('');
@@ -1419,13 +1422,21 @@ async function loadImportBrowseSessions() {
   }
 }
 
+function shortenPath(fullPath) {
+  for (const dir of state.allowedDirectories) {
+    if (fullPath.startsWith(dir + '/')) return fullPath.slice(dir.length + 1);
+    if (fullPath === dir) return fullPath.split('/').pop() || fullPath;
+  }
+  return fullPath;
+}
+
 function renderImportSessionsFlat(sessions, container, showProject = false) {
   const html = sessions.map(session => {
     const preview = session.firstPrompt || 'No preview available';
     const modified = session.modified ? formatRelativeTime(session.modified) : '';
     const branch = session.gitBranch ? `<span class="import-branch">${session.gitBranch}</span>` : '';
-    const projectLabel = showProject && session.projectName
-      ? `<div class="import-session-project">${escapeHtml(session.projectPath)}</div>`
+    const projectLabel = showProject && session.projectPath
+      ? `<div class="import-session-project">${escapeHtml(shortenPath(session.projectPath))}</div>`
       : '';
 
     return `
@@ -1543,6 +1554,12 @@ async function forkSession(localSessionId, projectPath, firstPrompt) {
     : 'Imported session';
   const name = baseName || 'Imported session';
 
+  // Show loading feedback
+  const importModal = document.getElementById('import-session-modal');
+  const overlay = importModal?.querySelector('.modal-overlay') || importModal;
+  if (overlay) overlay.style.opacity = '0.5';
+  if (overlay) overlay.style.pointerEvents = 'none';
+
   try {
     const response = await fetch('/api/sessions/fork', {
       method: 'POST',
@@ -1568,6 +1585,9 @@ async function forkSession(localSessionId, projectPath, firstPrompt) {
   } catch (err) {
     console.error('Failed to fork session:', err);
     alert('Failed to fork session');
+  } finally {
+    if (overlay) overlay.style.opacity = '';
+    if (overlay) overlay.style.pointerEvents = '';
   }
 }
 
