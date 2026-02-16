@@ -45,7 +45,6 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
 
 export function createWakeServer(processManager: ProcessManager): Server {
   const app = express();
-  app.use(express.json());
 
   const target = `http://localhost:${wakeConfig.omniBotPort}`;
 
