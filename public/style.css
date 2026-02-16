@@ -1503,6 +1503,55 @@ footer::before {
   font-size: 0.75rem;
 }
 
+/* Import modal mode toggle */
+.import-mode-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.import-mode-btn {
+  flex: 1;
+  padding: 0.5rem 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.import-mode-btn:hover {
+  border-color: var(--green-dim);
+  color: var(--text-primary);
+}
+
+.import-mode-btn.active {
+  background: var(--green-ghost);
+  border-color: var(--green-muted);
+  color: var(--green-bright);
+}
+
+/* Import browse panel load button */
+.import-load-btn {
+  width: 100%;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Project label on flat session items (shown in Recent mode) */
+.import-session-project {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Permission modal */
 .permission-modal-content {
   max-width: 550px;

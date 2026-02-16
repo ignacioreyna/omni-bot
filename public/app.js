@@ -27,6 +27,9 @@ const state = {
   // Sidebar state
   sidebarCollapsed: false,
   sidebarOpen: false, // For mobile
+  // Import modal state
+  importMode: 'recent',
+  importBrowsePath: '',
   // Confirm dialog callback
   confirmCallback: null,
 };
@@ -125,6 +128,7 @@ const elements = {
   mainContent: document.getElementById('main-content'),
   newSessionBtn: document.getElementById('new-session-btn'),
   importSessionBtn: document.getElementById('import-session-btn'),
+  sidebarImportBtn: document.getElementById('sidebar-import-btn'),
   abortBtn: document.getElementById('abort-btn'),
   messages: document.getElementById('messages'),
   streamingMessage: document.getElementById('streaming-message'),
@@ -147,9 +151,22 @@ const elements = {
   cancelModalBtn: document.getElementById('cancel-modal-btn'),
   // Import modal elements
   importSessionModal: document.getElementById('import-session-modal'),
+  importModeRecent: document.getElementById('import-mode-recent'),
+  importModeBrowse: document.getElementById('import-mode-browse'),
+  importRecentPanel: document.getElementById('import-recent-panel'),
+  importBrowsePanel: document.getElementById('import-browse-panel'),
   importLoading: document.getElementById('import-loading'),
   importSessionsList: document.getElementById('import-sessions-list'),
   importEmpty: document.getElementById('import-empty'),
+  importDirectorySelect: document.getElementById('import-directory-select'),
+  importDirectoryInput: document.getElementById('import-directory-input'),
+  importBrowseBtn: document.getElementById('import-browse-btn'),
+  importDirectoryBrowser: document.getElementById('import-directory-browser'),
+  importDirectoryList: document.getElementById('import-directory-list'),
+  importLoadSessionsBtn: document.getElementById('import-load-sessions-btn'),
+  importBrowseLoading: document.getElementById('import-browse-loading'),
+  importBrowseSessionsList: document.getElementById('import-browse-sessions-list'),
+  importBrowseEmpty: document.getElementById('import-browse-empty'),
   cancelImportBtn: document.getElementById('cancel-import-btn'),
   // Permission modal elements
   permissionModal: document.getElementById('permission-modal'),
@@ -1176,73 +1193,205 @@ async function createSession(name, workingDirectory) {
 // Import session functions
 async function openImportModal() {
   elements.importSessionModal.classList.remove('hidden');
+  setImportMode('recent');
+  loadImportRecentSessions();
+  loadImportAllowedDirectories();
+}
+
+function closeImportModal() {
+  elements.importSessionModal.classList.add('hidden');
+  // Reset browse state
+  state.importBrowsePath = '';
+  elements.importDirectoryInput.value = '';
+  elements.importDirectoryBrowser.classList.add('hidden');
+  elements.importBrowseSessionsList.classList.add('hidden');
+  elements.importBrowseEmpty.classList.add('hidden');
+  elements.importBrowseLoading.classList.add('hidden');
+}
+
+function setImportMode(mode) {
+  state.importMode = mode;
+  elements.importModeRecent.classList.toggle('active', mode === 'recent');
+  elements.importModeBrowse.classList.toggle('active', mode === 'browse');
+  elements.importRecentPanel.classList.toggle('hidden', mode !== 'recent');
+  elements.importBrowsePanel.classList.toggle('hidden', mode !== 'browse');
+}
+
+async function loadImportRecentSessions() {
   elements.importLoading.classList.remove('hidden');
   elements.importSessionsList.classList.add('hidden');
   elements.importEmpty.classList.add('hidden');
 
   try {
-    const response = await fetch('/api/local-sessions');
-    const projects = await response.json();
+    const response = await fetch('/api/local-sessions/recent?limit=5');
+    const sessions = await response.json();
 
     elements.importLoading.classList.add('hidden');
 
-    if (!projects.length) {
+    if (!sessions.length) {
       elements.importEmpty.classList.remove('hidden');
       return;
     }
 
-    renderImportSessionsList(projects);
+    renderImportSessionsFlat(sessions, elements.importSessionsList, true);
     elements.importSessionsList.classList.remove('hidden');
   } catch (err) {
-    console.error('Failed to load local sessions:', err);
-    elements.importLoading.textContent = 'Failed to load local sessions';
+    console.error('Failed to load recent sessions:', err);
+    elements.importLoading.textContent = 'Failed to load recent sessions';
   }
 }
 
-function closeImportModal() {
-  elements.importSessionModal.classList.add('hidden');
+async function loadImportAllowedDirectories() {
+  try {
+    const response = await fetch('/api/sessions/allowed-directories');
+    const directories = await response.json();
+    elements.importDirectorySelect.innerHTML = directories
+      .map(dir => `<option value="${dir}">${dir}</option>`)
+      .join('');
+  } catch (err) {
+    console.error('Failed to load directories:', err);
+  }
 }
 
-function renderImportSessionsList(projects) {
-  const html = projects.map(project => {
-    const sessionsHtml = project.sessions.slice(0, 5).map(session => {
-      const preview = session.firstPrompt || 'No preview available';
-      const modified = session.modified ? formatRelativeTime(session.modified) : '';
-      const branch = session.gitBranch ? `<span class="import-branch">${session.gitBranch}</span>` : '';
+async function loadImportBrowseSessions() {
+  const base = elements.importDirectorySelect.value;
+  if (!base) return;
 
-      return `
-        <div class="import-session-item"
-             data-session-id="${session.sessionId}"
-             data-project-path="${session.projectPath}"
-             data-first-prompt="${escapeHtml(session.firstPrompt || '')}">
-          <div class="import-session-header">
-            <span class="import-session-messages">${session.messageCount} messages</span>
-            ${branch}
-            <span class="import-session-time">${modified}</span>
-          </div>
-          <div class="import-session-preview">${escapeHtml(preview)}</div>
-        </div>
-      `;
-    }).join('');
+  const sub = elements.importDirectoryInput.value.trim();
+  const fullPath = sub ? base + '/' + sub : base;
 
-    const moreCount = project.sessions.length - 5;
-    const moreHtml = moreCount > 0 ? `<div class="import-more">+${moreCount} more sessions</div>` : '';
+  elements.importBrowseLoading.classList.remove('hidden');
+  elements.importBrowseSessionsList.classList.add('hidden');
+  elements.importBrowseEmpty.classList.add('hidden');
+
+  try {
+    const response = await fetch(`/api/local-sessions/by-directory?path=${encodeURIComponent(fullPath)}`);
+    const sessions = await response.json();
+
+    elements.importBrowseLoading.classList.add('hidden');
+
+    if (!response.ok) {
+      elements.importBrowseEmpty.textContent = sessions.error || 'Failed to load sessions';
+      elements.importBrowseEmpty.classList.remove('hidden');
+      return;
+    }
+
+    if (!sessions.length) {
+      elements.importBrowseEmpty.textContent = 'No sessions found for this directory.';
+      elements.importBrowseEmpty.classList.remove('hidden');
+      return;
+    }
+
+    renderImportSessionsFlat(sessions, elements.importBrowseSessionsList, true);
+    elements.importBrowseSessionsList.classList.remove('hidden');
+  } catch (err) {
+    console.error('Failed to load browse sessions:', err);
+    elements.importBrowseLoading.classList.add('hidden');
+    elements.importBrowseEmpty.textContent = 'Failed to load sessions';
+    elements.importBrowseEmpty.classList.remove('hidden');
+  }
+}
+
+function renderImportSessionsFlat(sessions, container, showProject = false) {
+  const html = sessions.map(session => {
+    const preview = session.firstPrompt || 'No preview available';
+    const modified = session.modified ? formatRelativeTime(session.modified) : '';
+    const branch = session.gitBranch ? `<span class="import-branch">${session.gitBranch}</span>` : '';
+    const projectLabel = showProject && session.projectName
+      ? `<div class="import-session-project">${escapeHtml(session.projectPath)}</div>`
+      : '';
 
     return `
-      <div class="import-project">
-        <div class="import-project-header">
-          <span class="import-project-name">${escapeHtml(project.projectName)}</span>
-          <span class="import-project-path">${escapeHtml(project.projectPath)}</span>
+      <div class="import-session-item"
+           data-session-id="${session.sessionId}"
+           data-project-path="${session.projectPath}"
+           data-first-prompt="${escapeHtml(session.firstPrompt || '')}">
+        <div class="import-session-header">
+          <span class="import-session-messages">${session.messageCount} messages</span>
+          ${branch}
+          <span class="import-session-time">${modified}</span>
         </div>
-        <div class="import-project-sessions">
-          ${sessionsHtml}
-          ${moreHtml}
-        </div>
+        <div class="import-session-preview">${escapeHtml(preview)}</div>
+        ${projectLabel}
       </div>
     `;
   }).join('');
 
-  elements.importSessionsList.innerHTML = html;
+  container.innerHTML = html;
+}
+
+// Import modal directory browser functions
+async function importBrowseDirectories(subpath = '') {
+  const base = elements.importDirectorySelect.value;
+  if (!base) return;
+
+  try {
+    const params = new URLSearchParams({ base, path: subpath });
+    const response = await fetch(`/api/sessions/browse?${params}`);
+    if (!response.ok) return;
+
+    const data = await response.json();
+    state.importBrowsePath = data.currentPath;
+    renderImportDirectoryList(data.directories);
+  } catch (err) {
+    console.error('Failed to browse import directories:', err);
+  }
+}
+
+function renderImportDirectoryList(directories) {
+  const items = [];
+
+  if (state.importBrowsePath) {
+    items.push(`<div class="directory-item parent" data-path="..">.. (parent)</div>`);
+  }
+
+  if (directories.length === 0 && !state.importBrowsePath) {
+    items.push(`<div class="directory-empty">No subdirectories</div>`);
+  } else {
+    for (const dir of directories) {
+      const fullPath = state.importBrowsePath ? `${state.importBrowsePath}/${dir}` : dir;
+      const isSelected = elements.importDirectoryInput.value === fullPath;
+      items.push(`<div class="directory-item${isSelected ? ' selected' : ''}" data-path="${fullPath}">${dir}</div>`);
+    }
+  }
+
+  elements.importDirectoryList.innerHTML = items.join('');
+}
+
+function handleImportDirectoryClick(e) {
+  const item = e.target.closest('.directory-item');
+  if (!item) return;
+
+  const itemPath = item.dataset.path;
+
+  if (itemPath === '..') {
+    const parts = state.importBrowsePath.split('/');
+    parts.pop();
+    importBrowseDirectories(parts.join('/'));
+  } else {
+    elements.importDirectoryInput.value = itemPath;
+    renderImportDirectoryList(
+      Array.from(elements.importDirectoryList.querySelectorAll('.directory-item:not(.parent)')).map(el => {
+        return el.dataset.path.split('/').pop();
+      })
+    );
+  }
+}
+
+function handleImportDirectoryDblClick(e) {
+  const item = e.target.closest('.directory-item');
+  if (!item || item.classList.contains('parent')) return;
+  importBrowseDirectories(item.dataset.path);
+}
+
+function toggleImportDirectoryBrowser() {
+  const isHidden = elements.importDirectoryBrowser.classList.contains('hidden');
+  if (isHidden) {
+    elements.importDirectoryBrowser.classList.remove('hidden');
+    importBrowseDirectories(elements.importDirectoryInput.value || '');
+  } else {
+    elements.importDirectoryBrowser.classList.add('hidden');
+  }
 }
 
 function formatRelativeTime(dateStr) {
@@ -2198,6 +2347,13 @@ function setupEventListeners() {
     openImportModal();
   });
 
+  elements.sidebarImportBtn.addEventListener('click', () => {
+    if (state.sidebarOpen) {
+      closeMobileSidebar();
+    }
+    openImportModal();
+  });
+
   elements.cancelImportBtn.addEventListener('click', () => {
     closeImportModal();
   });
@@ -2208,6 +2364,16 @@ function setupEventListeners() {
     }
   });
 
+  // Import mode toggle
+  elements.importModeRecent.addEventListener('click', () => {
+    setImportMode('recent');
+    loadImportRecentSessions();
+  });
+  elements.importModeBrowse.addEventListener('click', () => {
+    setImportMode('browse');
+  });
+
+  // Import recent sessions list click
   elements.importSessionsList.addEventListener('click', (e) => {
     const sessionItem = e.target.closest('.import-session-item');
     if (sessionItem) {
@@ -2215,6 +2381,32 @@ function setupEventListeners() {
       const projectPath = sessionItem.dataset.projectPath;
       const firstPrompt = sessionItem.dataset.firstPrompt;
       forkSession(sessionId, projectPath, firstPrompt);
+    }
+  });
+
+  // Import browse sessions list click
+  elements.importBrowseSessionsList.addEventListener('click', (e) => {
+    const sessionItem = e.target.closest('.import-session-item');
+    if (sessionItem) {
+      const sessionId = sessionItem.dataset.sessionId;
+      const projectPath = sessionItem.dataset.projectPath;
+      const firstPrompt = sessionItem.dataset.firstPrompt;
+      forkSession(sessionId, projectPath, firstPrompt);
+    }
+  });
+
+  // Import browse directory browser
+  elements.importBrowseBtn.addEventListener('click', toggleImportDirectoryBrowser);
+  elements.importDirectoryList.addEventListener('click', handleImportDirectoryClick);
+  elements.importDirectoryList.addEventListener('dblclick', handleImportDirectoryDblClick);
+  elements.importLoadSessionsBtn.addEventListener('click', loadImportBrowseSessions);
+
+  // Reset browse state when base directory changes
+  elements.importDirectorySelect.addEventListener('change', () => {
+    state.importBrowsePath = '';
+    elements.importDirectoryInput.value = '';
+    if (!elements.importDirectoryBrowser.classList.contains('hidden')) {
+      importBrowseDirectories('');
     }
   });
 
