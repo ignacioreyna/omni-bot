@@ -131,7 +131,7 @@ export class ProcessManager {
     this.rebuilding = true;
     try {
       console.log('[Wake] Starting build...');
-      await this.runBuild();
+      await this.runCommand('npm', ['run', 'build'], 'Build');
       console.log('[Wake] Build succeeded, restarting...');
       this.transitioning = false;
       this.rebuilding = false;
@@ -143,31 +143,45 @@ export class ProcessManager {
     }
   }
 
-  private runBuild(): Promise<void> {
+  async pull(): Promise<string> {
+    if (this.transitioning) throw new Error('Operation in progress');
+
+    this.transitioning = true;
+    try {
+      console.log('[Wake] Running git pull...');
+      const output = await this.runCommand('git', ['pull', 'origin', 'main'], 'Git pull');
+      console.log('[Wake] Git pull succeeded');
+      return output;
+    } finally {
+      this.transitioning = false;
+    }
+  }
+
+  private runCommand(cmd: string, args: string[], label: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const buildProcess = spawn('npm', ['run', 'build'], {
+      const child = spawn(cmd, args, {
         cwd: wakeConfig.projectRoot,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       let output = '';
-      buildProcess.stdout?.on('data', (data: Buffer) => {
+      child.stdout?.on('data', (data: Buffer) => {
         output += data.toString();
       });
-      buildProcess.stderr?.on('data', (data: Buffer) => {
+      child.stderr?.on('data', (data: Buffer) => {
         output += data.toString();
       });
 
-      buildProcess.on('error', (err) => {
-        reject(new Error(`Build failed to start: ${err.message}`));
+      child.on('error', (err) => {
+        reject(new Error(`${label} failed to start: ${err.message}`));
       });
 
-      buildProcess.on('exit', (code) => {
+      child.on('exit', (code) => {
         if (code === 0) {
-          resolve();
+          resolve(output);
         } else {
           const tail = output.trim().split('\n').slice(-20).join('\n');
-          reject(new Error(`Build failed (exit ${code}):\n${tail}`));
+          reject(new Error(`${label} failed (exit ${code}):\n${tail}`));
         }
       });
     });
