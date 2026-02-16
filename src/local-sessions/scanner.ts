@@ -383,6 +383,9 @@ function cleanSystemTags(content: string): string {
   return content
     .replace(/<system_instruction>[\s\S]*?<\/system_instruction>/g, '')
     .replace(/<system-instruction>[\s\S]*?<\/system-instruction>/g, '')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+    .replace(/<local-command-\w+>[\s\S]*?<\/local-command-\w+>/g, '')
+    .replace(/<command-\w+>[\s\S]*?<\/command-\w+>/g, '')
     .trim();
 }
 
