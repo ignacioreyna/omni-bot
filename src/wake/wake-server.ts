@@ -91,6 +91,16 @@ export function createWakeServer(processManager: ProcessManager): Server {
     }
   });
 
+  app.post('/wake/rebuild', async (_req: Request, res: Response) => {
+    try {
+      await processManager.rebuild();
+      res.json({ success: true, ...processManager.getStatus() });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      res.status(500).json({ error: message });
+    }
+  });
+
   app.get('/wake/logs', (req: Request, res: Response) => {
     const lines = parseInt((req.query.lines as string) || '100', 10);
     try {
