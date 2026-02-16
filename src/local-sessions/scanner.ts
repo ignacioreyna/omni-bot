@@ -68,31 +68,40 @@ function forEachProject(callback: (data: ProjectData) => void): void {
     }
 
     const indexPath = path.join(projectDir, 'sessions-index.json');
-    if (!fs.existsSync(indexPath)) continue;
 
-    try {
-      const content = fs.readFileSync(indexPath, 'utf-8');
-      const data = JSON.parse(content) as SessionIndex;
+    if (fs.existsSync(indexPath)) {
+      try {
+        const content = fs.readFileSync(indexPath, 'utf-8');
+        const data = JSON.parse(content) as SessionIndex;
 
-      if (!data.entries?.length) continue;
+        if (!data.entries?.length) continue;
 
-      const projectPath = data.originalPath || decodeProjectDir(dir);
+        const projectPath = data.originalPath || decodeProjectDir(dir);
+        const projectName = path.basename(projectPath);
+
+        const sessions: LocalSession[] = data.entries.map((entry) => ({
+          sessionId: entry.sessionId,
+          firstPrompt: entry.firstPrompt?.slice(0, 200) || '',
+          messageCount: entry.messageCount || 0,
+          created: entry.created || '',
+          modified: entry.modified || '',
+          gitBranch: entry.gitBranch || '',
+          projectPath: entry.projectPath || projectPath,
+          projectName,
+        }));
+
+        callback({ projectPath, projectName, sessions });
+      } catch {
+        continue;
+      }
+    } else {
+      // Fallback: scan .jsonl files directly (e.g. Conductor sessions)
+      const sessions = scanJsonlFallback(projectDir, dir);
+      if (sessions.length === 0) continue;
+
+      const projectPath = decodeProjectDir(dir);
       const projectName = path.basename(projectPath);
-
-      const sessions: LocalSession[] = data.entries.map((entry) => ({
-        sessionId: entry.sessionId,
-        firstPrompt: entry.firstPrompt?.slice(0, 200) || '',
-        messageCount: entry.messageCount || 0,
-        created: entry.created || '',
-        modified: entry.modified || '',
-        gitBranch: entry.gitBranch || '',
-        projectPath: entry.projectPath || projectPath,
-        projectName,
-      }));
-
       callback({ projectPath, projectName, sessions });
-    } catch {
-      continue;
     }
   }
 }
@@ -205,7 +214,7 @@ interface JsonlEntry {
   type?: string;
   message?: {
     role?: string;
-    content?: Array<{ type: string; text?: string }>;
+    content?: string | Array<{ type: string; text?: string }>;
   };
   timestamp?: string;
 }
@@ -224,24 +233,151 @@ function parseJsonlMessages(content: string): LocalMessage[] {
     }
 
     if (entry.type !== 'user' && entry.type !== 'assistant') continue;
-    if (!entry.message?.content || !Array.isArray(entry.message.content)) continue;
+    if (!entry.message?.content) continue;
 
-    // Extract only text blocks (skip tool_use and tool_result blocks)
-    const textParts = entry.message.content
-      .filter((block) => block.type === 'text' && block.text)
-      .map((block) => block.text as string);
+    let text: string;
 
-    if (textParts.length === 0) continue;
+    if (typeof entry.message.content === 'string') {
+      // Conductor sessions store content as a string with system tags
+      text = entry.type === 'user'
+        ? cleanSystemTags(entry.message.content)
+        : entry.message.content;
+    } else if (Array.isArray(entry.message.content)) {
+      // Regular CLI sessions store content as array of blocks
+      const textParts = entry.message.content
+        .filter((block) => block.type === 'text' && block.text)
+        .map((block) => block.text as string);
+      text = textParts.join('\n');
+    } else {
+      continue;
+    }
+
+    if (!text) continue;
 
     const role = entry.message.role === 'assistant' ? 'assistant' : 'user';
     messages.push({
       role,
-      content: textParts.join('\n'),
+      content: text,
       timestamp: entry.timestamp || '',
     });
   }
 
   return messages;
+}
+
+/**
+ * Fallback scanner for project directories without sessions-index.json.
+ * Reads .jsonl transcript files directly to extract session metadata.
+ */
+function scanJsonlFallback(projectDir: string, dirName: string): LocalSession[] {
+  let files: string[];
+  try {
+    files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return [];
+  }
+
+  const projectPath = decodeProjectDir(dirName);
+  const projectName = path.basename(projectPath);
+  const sessions: LocalSession[] = [];
+
+  for (const file of files) {
+    const jsonlPath = path.join(projectDir, file);
+    const session = parseSessionFromJsonl(jsonlPath, projectPath, projectName);
+    if (session) sessions.push(session);
+  }
+
+  return sessions;
+}
+
+/**
+ * Extract session metadata from the first few lines of a .jsonl transcript.
+ * Reads only the first 32KB to stay fast on large files.
+ */
+function parseSessionFromJsonl(
+  jsonlPath: string,
+  projectPath: string,
+  projectName: string
+): LocalSession | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(jsonlPath, 'r');
+  } catch {
+    return null;
+  }
+
+  try {
+    const buf = Buffer.alloc(32 * 1024);
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+    const chunk = buf.toString('utf-8', 0, bytesRead);
+    const lines = chunk.split('\n');
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(jsonlPath);
+    } catch {
+      return null;
+    }
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      let entry: JsonlFallbackEntry;
+      try {
+        entry = JSON.parse(line) as JsonlFallbackEntry;
+      } catch {
+        continue;
+      }
+
+      if (entry.type !== 'user' || !entry.message) continue;
+
+      const content = entry.message.content;
+      let firstPrompt = '';
+
+      if (typeof content === 'string') {
+        firstPrompt = cleanSystemTags(content).slice(0, 200);
+      } else if (Array.isArray(content)) {
+        firstPrompt = content
+          .filter((b) => b.type === 'text' && b.text)
+          .map((b) => b.text as string)
+          .join('\n')
+          .slice(0, 200);
+      }
+
+      return {
+        sessionId: entry.sessionId || path.basename(jsonlPath, '.jsonl'),
+        firstPrompt,
+        messageCount: 0,
+        created: entry.timestamp || stat.birthtime.toISOString(),
+        modified: stat.mtime.toISOString(),
+        gitBranch: entry.gitBranch || '',
+        projectPath,
+        projectName,
+      };
+    }
+
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+interface JsonlFallbackEntry {
+  type?: string;
+  sessionId?: string;
+  timestamp?: string;
+  gitBranch?: string;
+  message?: {
+    role?: string;
+    content?: string | Array<{ type: string; text?: string }>;
+  };
+}
+
+function cleanSystemTags(content: string): string {
+  return content
+    .replace(/<system_instruction>[\s\S]*?<\/system_instruction>/g, '')
+    .replace(/<system-instruction>[\s\S]*?<\/system-instruction>/g, '')
+    .trim();
 }
 
 /**
