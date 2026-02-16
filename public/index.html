@@ -17,6 +17,10 @@
         <span class="sidebar-btn-icon">+</span>
         <span class="sidebar-btn-text">New</span>
       </button>
+      <button id="sidebar-import-btn" class="sidebar-btn" title="Import local session">
+        <span class="sidebar-btn-icon">&#8615;</span>
+        <span class="sidebar-btn-text">Import</span>
+      </button>
       <button id="sidebar-search-btn" class="sidebar-btn sidebar-search-btn-collapsed" title="Search sessions">
         <span class="sidebar-btn-icon">&#128269;</span>
       </button>
@@ -134,11 +138,44 @@
     <div id="import-session-modal" class="modal hidden">
       <div class="modal-content modal-content-wide">
         <h2>Import Local Session</h2>
-        <div id="import-loading" class="import-loading">Loading local sessions...</div>
-        <div id="import-sessions-list" class="import-sessions-list hidden"></div>
-        <div id="import-empty" class="import-empty hidden">
-          No local Claude Code sessions found.
+
+        <div class="import-mode-toggle">
+          <button type="button" id="import-mode-recent" class="import-mode-btn active">Recent</button>
+          <button type="button" id="import-mode-browse" class="import-mode-btn">Browse</button>
         </div>
+
+        <!-- Recent panel -->
+        <div id="import-recent-panel">
+          <div id="import-loading" class="import-loading">Loading recent sessions...</div>
+          <div id="import-sessions-list" class="import-sessions-list hidden"></div>
+          <div id="import-empty" class="import-empty hidden">
+            No local Claude Code sessions found.
+          </div>
+        </div>
+
+        <!-- Browse panel -->
+        <div id="import-browse-panel" class="hidden">
+          <label for="import-directory-select">Base Directory</label>
+          <select id="import-directory-select"></select>
+
+          <label for="import-directory-input">Subdirectory</label>
+          <div class="subdir-input-row">
+            <input type="text" id="import-directory-input" placeholder="Subdirectory (optional)">
+            <button type="button" id="import-browse-btn" class="btn">Browse</button>
+          </div>
+          <div id="import-directory-browser" class="directory-browser hidden">
+            <div id="import-directory-list"></div>
+          </div>
+
+          <button type="button" id="import-load-sessions-btn" class="btn btn-primary import-load-btn">Load Sessions</button>
+
+          <div id="import-browse-loading" class="import-loading hidden">Loading sessions...</div>
+          <div id="import-browse-sessions-list" class="import-sessions-list hidden"></div>
+          <div id="import-browse-empty" class="import-empty hidden">
+            No sessions found for this directory.
+          </div>
+        </div>
+
         <div class="modal-actions">
           <button type="button" id="cancel-import-btn" class="btn">Cancel</button>
         </div>

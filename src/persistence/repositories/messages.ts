@@ -89,6 +89,27 @@ export function searchMessages(query: string, sessionId?: string): Message[] {
   return rows.map(rowToMessage);
 }
 
+export function bulkCreateMessages(
+  sessionId: string,
+  messages: Array<{ role: Message['role']; content: string; timestamp?: string }>
+): void {
+  const db = getDatabase();
+  const stmt = db.prepare(
+    `INSERT INTO messages (session_id, role, content, created_at)
+     VALUES (?, ?, ?, COALESCE(?, datetime('now')))`
+  );
+
+  const insertMany = db.transaction(
+    (msgs: Array<{ role: Message['role']; content: string; timestamp?: string }>) => {
+      for (const msg of msgs) {
+        stmt.run(sessionId, msg.role, msg.content, msg.timestamp || null);
+      }
+    }
+  );
+
+  insertMany(messages);
+}
+
 export function deleteMessagesForSession(sessionId: string): number {
   const db = getDatabase();
   const result = db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);

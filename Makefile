@@ -30,11 +30,11 @@ start:
 # Stop server gracefully (if running in foreground, use Ctrl+C)
 stop:
 	@echo "Use Ctrl+C to stop foreground server, or 'make kill' for background"
-
 # Force kill any process on port 3000 and 3001
 kill:
 	@lsof -ti:3000 | xargs kill -9 2>/dev/null && echo "Killed process on port 3000" || echo "No process on port 3000"
 	@lsof -ti:3001 | xargs kill -9 2>/dev/null && echo "Killed process on port 3001" || echo "No process on port 3001"
+  @pkill -9 -f "caffeinate -di" 2>/dev/null && echo "Killed caffeinate" || true
 
 # Kill and restart
 restart: kill

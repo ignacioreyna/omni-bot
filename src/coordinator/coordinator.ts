@@ -6,6 +6,7 @@ import { appConfig } from '../config.js';
 import { permissionManager, extractPattern } from '../permissions/manager.js';
 import { generateSessionTitle } from '../utils/title-generator.js';
 import { analyzeAndSelectModel } from '../models/model-router.js';
+import { readLocalSessionMessages } from '../local-sessions/scanner.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface PermissionRequestData {
@@ -166,6 +167,12 @@ export class Coordinator {
 
     // Create the session with the local session ID stored
     const session = sessionsRepo.createSession(name, workingDirectory, ownerEmail, localSessionId);
+
+    // Import messages from the local session's .jsonl transcript
+    const localMessages = readLocalSessionMessages(localSessionId);
+    if (localMessages.length > 0) {
+      messagesRepo.bulkCreateMessages(session.id, localMessages);
+    }
 
     // Mark this session to use forkSession=true on first ClaudeProcess creation
     this.forkedSessions.add(session.id);
