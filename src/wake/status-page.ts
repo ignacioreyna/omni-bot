@@ -43,6 +43,8 @@ export function renderStatusPage(status: OmniBotStatus): string {
     .btn-stop:hover:not(:disabled){background:#f85149}
     .btn-restart{background:#1f6feb;color:#fff;border-color:#388bfd}
     .btn-restart:hover:not(:disabled){background:#388bfd}
+    .btn-rebuild{background:#d29922;color:#fff;border-color:#e3b341}
+    .btn-rebuild:hover:not(:disabled){background:#e3b341}
     .msg{font-size:.85rem;margin-top:1rem;min-height:1.2rem}
     .msg.error{color:#f85149}
     .msg.info{color:#58a6ff}
@@ -68,6 +70,7 @@ export function renderStatusPage(status: OmniBotStatus): string {
       <button class="btn-start" id="btn-start" onclick="action('start')" ${isRunning ? 'disabled' : ''}>Start</button>
       <button class="btn-stop" id="btn-stop" onclick="action('stop')" ${!isRunning ? 'disabled' : ''}>Stop</button>
       <button class="btn-restart" id="btn-restart" onclick="action('restart')">Restart</button>
+      <button class="btn-rebuild" id="btn-rebuild" onclick="action('rebuild')">Rebuild & Restart</button>
     </div>
     <div class="spinner" id="spinner"></div>
     <div class="msg" id="msg">${status.lastError ? '<span class="error">Last error: ' + escapeHtml(status.lastError) + '</span>' : ''}</div>
@@ -83,7 +86,7 @@ export function renderStatusPage(status: OmniBotStatus): string {
         const res=await fetch('/wake/'+name,{method:'POST'});
         const data=await res.json();
         if(!res.ok)throw new Error(data.error||'Failed');
-        if(name==='start'||name==='restart'){
+        if(name==='start'||name==='restart'||name==='rebuild'){
           msg.innerHTML='<span class="info">Redirecting...</span>';
           setTimeout(()=>{window.location.href='/';},1500);
         }else{
