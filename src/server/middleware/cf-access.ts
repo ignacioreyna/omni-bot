@@ -1,11 +1,12 @@
+import type { IncomingMessage } from 'http';
 import { Request, Response, NextFunction } from 'express';
 import { appConfig } from '../../config.js';
 import { validateCfAccessJwt, type CfAccessUser } from '../../shared/cf-jwt.js';
 
 export type { CfAccessUser };
 
-// Extend Express Request to include user
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- Express augmentation requires a namespace
   namespace Express {
     interface Request {
       user?: CfAccessUser;
@@ -13,52 +14,50 @@ declare global {
   }
 }
 
-/**
- * Express middleware that validates Cloudflare Access JWT.
- * In tailscale mode, this is a no-op.
- */
-export function cfAccessMiddleware(req: Request, res: Response, next: NextFunction): void {
-  if (appConfig.authMode === 'tailscale') {
-    req.user = { email: 'local@tailscale', sub: 'local' };
-    next();
-    return;
+const LOCAL_USER: CfAccessUser = { email: 'local@tailscale', sub: 'local' };
+
+function readCookie(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(rest.join('='));
   }
-
-  const token = req.headers['cf-access-jwt-assertion'] as string | undefined;
-
-  if (!token) {
-    res.status(401).json({ error: 'Missing CF Access JWT' });
-    return;
-  }
-
-  validateCfAccessJwt(token, {
-    teamDomain: appConfig.cfAccessTeamDomain!,
-    aud: appConfig.cfAccessAud!,
-  })
-    .then((user) => {
-      req.user = user;
-      next();
-    })
-    .catch((err) => {
-      console.error('[CF Access] JWT validation failed:', err.message);
-      res.status(401).json({ error: 'Invalid CF Access JWT' });
-    });
+  return undefined;
 }
 
 /**
- * Validates a CF Access JWT and returns user info (for use outside middleware)
+ * Cloudflare injects the JWT as a header on every proxied request, including
+ * WebSocket upgrades; the CF_Authorization cookie is the fallback.
  */
-export async function validateToken(token: string): Promise<CfAccessUser | null> {
-  if (appConfig.authMode === 'tailscale') {
-    return { email: 'local@tailscale', sub: 'local' };
-  }
+export async function authenticate(req: IncomingMessage): Promise<CfAccessUser | null> {
+  if (appConfig.authMode === 'tailscale') return LOCAL_USER;
+
+  const header = req.headers['cf-access-jwt-assertion'];
+  const token =
+    (Array.isArray(header) ? header[0] : header) ??
+    readCookie(req.headers.cookie, 'CF_Authorization');
+  if (!token) return null;
 
   try {
     return await validateCfAccessJwt(token, {
       teamDomain: appConfig.cfAccessTeamDomain!,
       aud: appConfig.cfAccessAud!,
     });
-  } catch {
+  } catch (err) {
+    console.error('[CF Access] JWT validation failed:', (err as Error).message);
     return null;
   }
+}
+
+export function cfAccessMiddleware(req: Request, res: Response, next: NextFunction): void {
+  authenticate(req)
+    .then((user) => {
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      req.user = user;
+      next();
+    })
+    .catch(next);
 }
