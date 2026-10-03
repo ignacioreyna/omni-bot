@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** rebuilt around tmux. Sessions are real `claude` CLI processes in tmux,
+  shown in a mobile web terminal (xterm.js + node-pty) with an iOS key bar and composer.
+- WebSocket auth validates the CF Access JWT on upgrade (no ws-token exchange).
+
+### Removed
+- Claude Agent SDK integration, SQLite persistence, permission relay, model router,
+  Whisper transcription, Conductor/CLI session import.
+
+### Added
+- `scripts/notify.sh` Claude Code hook for ntfy push notifications.
+
 ### Added
 - Comprehensive documentation suite (Architecture, Installation, Usage, API, Development)
 - Updated CLAUDE.md with detailed reference information

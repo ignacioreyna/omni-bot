@@ -1,112 +1,74 @@
 # Omni-Bot
 
-Web-based Claude Code coordinator for remote access via Tailscale or Cloudflare Tunnel.
+Mobile-friendly web terminal for the tmux sessions running Claude Code on your Mac, reachable through a Cloudflare Tunnel (or Tailscale).
 
-## What is Omni-Bot?
+Sessions are plain tmux sessions running the real `claude` CLI. Start one from the phone and `tmux attach` to it from the desktop (or the other way around). Omni-Bot keeps no state of its own and can restart without killing anything.
 
-Omni-Bot is a self-hosted web application that provides remote access to Claude Code from any device. It spawns Claude sessions as child processes using the Claude Agent SDK, allowing you to interact with Claude through a web interface while maintaining all the power of Claude Code.
-
-**Key Features:**
-
-- 🌐 **Remote Access**: Access Claude Code from any device on your network
-- 🔒 **Secure**: Authentication via Tailscale VPN or Cloudflare Access
-- 💬 **Real-time Streaming**: WebSocket-based streaming of Claude responses
-- 📁 **Session Management**: Persistent sessions with message history
-- 🎙️ **Voice Input**: Whisper-based audio transcription
-- 🛡️ **Interactive Permissions**: Review and approve file operations and shell commands
-- 🤖 **Smart Model Selection**: Automatic model selection based on task complexity
-
-## Quick Start
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd omni-bot
-
-# Install dependencies
-npm install
-
-# Create .env file
-cp .env.example .env
-# Edit .env to configure ALLOWED_DIRECTORIES and other settings
-
-# Run in development mode
-npm run dev
+```
+iPhone ─▶ CF Access ─▶ cloudflared ─▶ wake server :3000 ──proxy──▶ omni-bot :3001 ─▶ node-pty ─▶ tmux attach
+                                     (always on, launchd)        (start/stop remotely)
 ```
 
-Visit `http://localhost:3000` in your browser.
+## Features
 
-## Documentation
-
-- [Installation Guide](docs/INSTALLATION.md) - Detailed setup instructions
-- [Usage Guide](docs/USAGE.md) - How to use Omni-Bot
-- [Architecture Overview](docs/ARCHITECTURE.md) - System design and components
-- [API Reference](docs/API.md) - REST and WebSocket API documentation
-- [Development Guide](docs/DEVELOPMENT.md) - Contributing and development workflow
+- Session list showing cwd, running command, last activity and attached clients
+- New session: pick a directory, start with `claude`, `claude --continue`, `claude --resume` or a plain shell
+- xterm.js terminal with a key bar for keys the iOS keyboard lacks: Esc, sticky Ctrl, ^C, Tab, ⇧Tab, arrows, PgUp/PgDn (tmux scrollback), Live
+- Composer box for dictation and multi-line messages (sent as a bracketed paste)
+- Auto-reconnect when iOS suspends the tab
+- Wake server: an always-on process (launchd) that starts, stops and rebuilds omni-bot remotely at `/wake`
+- Push notifications through a Claude Code hook and ntfy (`scripts/notify.sh`)
 
 ## Requirements
 
-- **Node.js**: >= 22.0.0
-- **Claude Code**: Must have Claude Code CLI installed and authenticated
-- **SQLite**: Built-in via better-sqlite3
-- **Network Access**: Either Tailscale mesh VPN or Cloudflare Tunnel
+- macOS, Node >= 22, `tmux` (`brew install tmux`), Claude Code CLI
+- `cloudflared` tunnel + a Cloudflare Access application, or Tailscale
 
-## Configuration
+## Setup
 
-Key environment variables (see `.env.example` for full list):
-
-```env
-PORT=3000
-ALLOWED_DIRECTORIES=/path/to/projects,/another/path
-DATABASE_PATH=./data/omni-bot.db
-AUTH_MODE=tailscale  # or cloudflare
-INTERACTIVE_PERMISSIONS=true  # Require user approval for dangerous operations
+```bash
+npm install          # postinstall fixes node-pty's spawn-helper permissions
+cp .env.example .env # set ALLOWED_DIRECTORIES, AUTH_MODE, CF_ACCESS_*
+npm run build
+make wake-start      # or install the launchd agents in support/
 ```
 
-## Security Modes
+Open `/` for sessions, `/wake` for server controls. On iOS, add the page to the Home Screen so it opens full-screen.
 
-### Tailscale (Default)
-No authentication at app level. Access restricted to devices on your Tailscale network.
+### launchd agents (`support/`)
 
-```env
-AUTH_MODE=tailscale
+| Agent | Purpose |
+|---|---|
+| `com.omni-bot.wake` | Wake server. Always on, proxies to omni-bot and starts it on demand |
+| `com.omni-bot.tunnel` | `cloudflared tunnel run omni-bot` |
+| `com.omni-bot.caffeinate` | Keeps the Mac awake |
+
+### Notifications
+
+1. Install the ntfy app on the phone and subscribe to a hard-to-guess topic.
+2. Add the hook to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Notification": [{ "hooks": [{ "type": "command", "command": "/path/to/omni-bot/scripts/notify.sh" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/path/to/omni-bot/scripts/notify.sh" }] }]
+  }
+}
 ```
 
-### Cloudflare Access
-Public URL protected by Cloudflare Zero Trust with JWT validation.
+3. Export `NTFY_TOPIC` and `OMNI_BOT_URL` in the shell profile. Tapping the notification opens that session.
 
-```env
-AUTH_MODE=cloudflare
-CF_ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com
-CF_ACCESS_AUD=<application-audience-tag>
+## Notes
+
+- **Screen size with several clients:** tmux sizes the window to the most recently active client. Typing on the phone shrinks the desktop view until you type on the desktop again.
+- **Security:** the terminal is a full shell. In `cloudflare` mode every HTTP request and WebSocket upgrade validates the CF Access JWT. Never expose omni-bot or the wake server without Access in front.
+
+## Development
+
+```bash
+npm run dev       # omni-bot only, hot reload
+make wake         # wake server, hot reload
+npm test
+npm run lint
 ```
-
-See [Installation Guide](docs/INSTALLATION.md) for detailed setup.
-
-## Architecture
-
-```
-Browser → Express + WebSocket → Coordinator → Claude Agent SDK
-                                    ↓
-                                 SQLite
-```
-
-- **Express**: REST API and static file serving
-- **WebSocket**: Real-time bidirectional communication
-- **Coordinator**: Session lifecycle management
-- **Claude Agent SDK**: Direct integration with Claude
-- **SQLite**: Session and message persistence
-
-See [Architecture Overview](docs/ARCHITECTURE.md) for details.
-
-## Project Status
-
-Omni-Bot is in active development. Current version: **0.1.0**
-
-## License
-
-See [LICENSE](LICENSE) file for details.
-
-## Support
-
-For issues, questions, or contributions, please use the GitHub issue tracker.
