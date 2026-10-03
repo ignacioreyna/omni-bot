@@ -51,6 +51,7 @@ support/*.plist                  # launchd agents (wake, tunnel, caffeinate)
 - **Unset `TMUX` before `tmux attach`** from node-pty, otherwise attach refuses to nest when omni-bot itself runs inside tmux.
 - **Claude Code treats text+Enter arriving together as a paste.** The composer sends Enter ~80ms after the text. Multi-line text goes as a bracketed paste.
 - **Cloudflare drops idle WebSockets (~100s)**. The server pings every 30s.
+- **TLS-inspecting proxies (Netskope) break JWT validation** with `fetch failed` / `SELF_SIGNED_CERT_IN_CHAIN`: Node ignores the macOS keychain. The wake plist sets `NODE_USE_SYSTEM_CA=1` (Node >= 23.8), and omni-bot inherits it.
 - **CF Access JWT on WS upgrades** comes in the `Cf-Access-Jwt-Assertion` header, with the `CF_Authorization` cookie as fallback. No separate WS token exchange.
 
 ## Code Style
