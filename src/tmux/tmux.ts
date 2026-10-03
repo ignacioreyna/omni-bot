@@ -50,6 +50,9 @@ export function tmuxEnv(source: NodeJS.ProcessEnv = process.env): Record<string,
       continue;
     env[key] = value;
   }
+  // launchd sets no locale. Without UTF-8, tmux rewrites tabs in -F output to "_" (breaking
+  // parsing) and treats attached clients as non-UTF-8 (mangling Claude Code's TUI)
+  if (!env.LC_ALL && !env.LC_CTYPE && !env.LANG) env.LANG = 'en_US.UTF-8';
   return env;
 }
 

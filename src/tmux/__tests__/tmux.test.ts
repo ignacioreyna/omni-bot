@@ -9,6 +9,10 @@ process.env.TMUX_SOCKET_NAME = SOCKET;
 // Would leak into every shell if the tmux server inherited omni-bot's environment
 process.env.PORT = '3001';
 process.env.CLAUDECODE = '1';
+// Like launchd: no locale, which makes tmux mangle the tab-separated list-sessions output
+delete process.env.LANG;
+delete process.env.LC_ALL;
+delete process.env.LC_CTYPE;
 
 const {
   createSession,
@@ -64,7 +68,11 @@ describe('tmuxEnv', () => {
       TMUX: 's',
       PATH: '/bin',
     });
-    expect(env).toEqual({ HOME: '/h', PATH: '/bin' });
+    expect(env).toEqual({ HOME: '/h', PATH: '/bin', LANG: 'en_US.UTF-8' });
+  });
+
+  it('keeps an existing locale', () => {
+    expect(tmuxEnv({ LC_ALL: 'es_AR.UTF-8' })).toEqual({ LC_ALL: 'es_AR.UTF-8' });
   });
 });
 

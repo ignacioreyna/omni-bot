@@ -51,6 +51,7 @@ support/*.plist                  # launchd agents (wake, tunnel, caffeinate)
 - **node-pty prebuilds ship `spawn-helper` without +x** → `posix_spawnp failed`. The `postinstall` script fixes it; re-run `npm install` if it shows up.
 - **macOS `/tmp` is a symlink** to `/private/tmp`. Allowed dirs and requested cwds are both realpath'd before comparison.
 - **Every tmux call runs with `tmuxEnv()`**. The process that starts the tmux server sets the global env for all future shells. Without the filter, `PORT=3001`, `.env` values and `CLAUDECODE`/`CLAUDE_CODE_*` (when omni-bot is launched from Claude Code) leak into every terminal.
+- **launchd sets no locale.** Without UTF-8, tmux rewrites tabs in `-F` output to `_` and treats clients as non-UTF-8. `tmuxEnv()` defaults `LANG=en_US.UTF-8` and attach uses `tmux -u`. Tests run with the locale removed to catch regressions.
 - **Unset `TMUX` before `tmux attach`** from node-pty, otherwise attach refuses to nest when omni-bot itself runs inside tmux.
 - **Claude Code treats text+Enter arriving together as a paste.** The composer sends Enter ~80ms after the text. Multi-line text goes as a bracketed paste.
 - **Cloudflare drops idle WebSockets (~100s)**. The server pings every 30s.

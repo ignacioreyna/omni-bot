@@ -36,7 +36,7 @@ function attachTerminal(ws: WebSocket, session: string, cols: number, rows: numb
   // tmuxEnv also drops TMUX, without which attach refuses to nest inside an existing client
   const env = { ...tmuxEnv(), TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 
-  const term = pty.spawn('tmux', tmuxArgs(['attach-session', '-t', sessionTarget(session)]), {
+  const term = pty.spawn('tmux', tmuxArgs(['-u', 'attach-session', '-t', sessionTarget(session)]), {
     name: 'xterm-256color',
     cols,
     rows,
