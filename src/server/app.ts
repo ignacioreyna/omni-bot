@@ -1,7 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import os from 'os';
-import { realpath } from 'fs/promises';
+import { createHash } from 'crypto';
+import { readFile, realpath } from 'fs/promises';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
@@ -25,6 +26,22 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const publicDir = path.join(__dirname, '../../public');
+
+const VERSIONED_ASSETS = ['/app.js', '/style.css'];
+
+/**
+ * index.html with content-hashed asset URLs. Browsers and the Cloudflare edge otherwise
+ * keep serving a stale app.js/style.css next to a fresh index.html after a deploy.
+ */
+async function renderIndex(): Promise<string> {
+  let html = await readFile(path.join(publicDir, 'index.html'), 'utf8');
+  for (const asset of VERSIONED_ASSETS) {
+    const content = await readFile(path.join(publicDir, asset));
+    const version = createHash('sha1').update(content).digest('hex').slice(0, 10);
+    html = html.replace(`"${asset}"`, `"${asset}?v=${version}"`);
+  }
+  return html;
+}
 
 function packageDir(name: string): string {
   return path.dirname(require.resolve(`${name}/package.json`));
@@ -62,7 +79,7 @@ export function createApp(): express.Application {
   app.use('/vendor/xterm', express.static(packageDir('@xterm/xterm')));
   app.use('/vendor/addon-fit', express.static(packageDir('@xterm/addon-fit')));
   app.use('/vendor/addon-web-links', express.static(packageDir('@xterm/addon-web-links')));
-  app.use(express.static(publicDir));
+  app.use(express.static(publicDir, { index: false }));
 
   app.get('/api/config', (req: Request, res: Response) => {
     res.json({
@@ -174,9 +191,15 @@ export function createApp(): express.Application {
     })
   );
 
-  app.get('*', (_req: Request, res: Response) => {
-    res.sendFile(path.join(publicDir, 'index.html'));
-  });
+  app.get(
+    '*',
+    asyncHandler(async (_req, res) => {
+      res
+        .set('Cache-Control', 'no-cache')
+        .type('html')
+        .send(await renderIndex());
+    })
+  );
 
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('Unhandled error:', err);
