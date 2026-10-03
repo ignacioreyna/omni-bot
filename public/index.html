@@ -22,8 +22,17 @@
         <button class="primary" id="new-session">+ New</button>
       </div>
     </header>
-    <ul id="session-list" class="session-list"></ul>
-    <p id="empty" class="empty" hidden>No tmux sessions running.<br>Create one to start Claude.</p>
+    <div class="home-scroll">
+      <h2 class="section-title">Terminals</h2>
+      <ul id="session-list" class="session-list"></ul>
+      <p id="empty" class="empty" hidden>No tmux sessions running.<br>Create one to start Claude.</p>
+
+      <h2 class="section-title">Running on this Mac <span class="hint">outside tmux</span></h2>
+      <ul id="running-list" class="session-list"></ul>
+
+      <h2 class="section-title">Recent</h2>
+      <ul id="recent-list" class="session-list"></ul>
+    </div>
   </main>
 
   <section id="term-view" class="view" hidden>
@@ -83,6 +92,15 @@
         <button type="button" id="cancel-new">Cancel</button>
         <button type="submit" class="primary" id="create-session">Create</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="resume-dialog">
+    <form method="dialog">
+      <h2 id="resume-title"></h2>
+      <p id="resume-cwd" class="resume-cwd"></p>
+      <p id="resume-text" class="resume-text"></p>
+      <div id="resume-actions" class="dialog-actions"></div>
     </form>
   </dialog>
 

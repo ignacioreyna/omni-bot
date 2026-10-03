@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 const FONT_SIZE_KEY = 'omni.fontSize';
 const COMPOSER_KEY = 'omni.composerHidden';
 const SESSIONS_POLL_MS = 5000;
+const COLLAPSED_COUNT = 5;
 // Claude Code treats text+Enter arriving together as a paste; a short gap makes Enter submit
 const SUBMIT_DELAY_MS = 80;
 
@@ -13,6 +14,8 @@ const state = {
   home: '',
   defaultCommand: 'claude',
   sessions: [],
+  local: { running: [], recent: [] },
+  expanded: new Set(),
   directories: [],
   selectedDir: null,
   pollTimer: null,
@@ -68,50 +71,157 @@ function timeAgo(iso) {
 
 /* ---------- Home ---------- */
 
-function renderSessions() {
-  const list = $('session-list');
-  list.replaceChildren();
-  $('empty').hidden = state.sessions.length > 0;
+function sessionCard({ title, dot, cwd, meta, onOpen, onKill }) {
+  const li = document.createElement('li');
+  li.className = 'session-card';
+  li.addEventListener('click', onOpen);
 
-  for (const s of state.sessions) {
-    const li = document.createElement('li');
-    li.className = 'session-card';
-    li.addEventListener('click', () => openSession(s.name));
+  const main = document.createElement('div');
+  main.className = 'session-main';
 
-    const main = document.createElement('div');
-    main.className = 'session-main';
+  const name = document.createElement('div');
+  name.className = 'session-name';
+  if (dot) {
+    const el = document.createElement('span');
+    el.className = dot.className;
+    el.title = dot.title;
+    name.append(el);
+  }
+  name.append(title);
 
-    const name = document.createElement('div');
-    name.className = 'session-name';
-    if (s.attachedClients > 0) {
-      const dot = document.createElement('span');
-      dot.className = 'attached-dot';
-      dot.title = `${s.attachedClients} client(s) attached`;
-      name.append(dot);
-    }
-    name.append(s.name);
+  const cwdEl = document.createElement('div');
+  cwdEl.className = 'session-cwd';
+  cwdEl.textContent = shortPath(cwd);
 
-    const cwd = document.createElement('div');
-    cwd.className = 'session-cwd';
-    cwd.textContent = shortPath(s.cwd);
+  const metaEl = document.createElement('div');
+  metaEl.className = 'session-meta';
+  metaEl.textContent = meta;
 
-    const meta = document.createElement('div');
-    meta.className = 'session-meta';
-    meta.textContent = `${s.command} · active ${timeAgo(s.lastActivity)}`;
+  main.append(name, cwdEl, metaEl);
+  li.append(main);
 
-    main.append(name, cwd, meta);
-
+  if (onKill) {
     const kill = document.createElement('button');
     kill.className = 'kill-btn';
     kill.textContent = '✕';
     kill.title = 'Kill session';
     kill.addEventListener('click', (e) => {
       e.stopPropagation();
-      killSession(s.name);
+      onKill();
     });
+    li.append(kill);
+  }
+  return li;
+}
 
-    li.append(main, kill);
-    list.append(li);
+function renderSessions() {
+  $('empty').hidden = state.sessions.length > 0;
+  $('session-list').replaceChildren(
+    ...state.sessions.map((s) =>
+      sessionCard({
+        title: s.name,
+        dot: s.attachedClients > 0 && { className: 'attached-dot', title: `${s.attachedClients} client(s) attached` },
+        cwd: s.cwd,
+        meta: `${s.command} · active ${timeAgo(s.lastActivity)}`,
+        onOpen: () => openSession(s.name),
+        onKill: () => killSession(s.name),
+      })
+    )
+  );
+}
+
+function renderCollapsible(list, items, key, toCard) {
+  const expanded = state.expanded.has(key);
+  const visible = expanded ? items : items.slice(0, COLLAPSED_COUNT);
+  list.replaceChildren(...visible.map(toCard));
+
+  if (items.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'None';
+    list.append(empty);
+  } else if (items.length > COLLAPSED_COUNT) {
+    const more = document.createElement('button');
+    more.className = 'show-more';
+    more.textContent = expanded ? 'Show less' : `Show all (${items.length})`;
+    more.addEventListener('click', () => {
+      if (expanded) state.expanded.delete(key);
+      else state.expanded.add(key);
+      renderLocalSessions();
+    });
+    list.append(more);
+  }
+}
+
+function localCard(s) {
+  return sessionCard({
+    title: s.title,
+    dot: s.pid && { className: 'running-dot', title: `Running (pid ${s.pid})` },
+    cwd: s.cwd,
+    meta: s.pid ? `running · pid ${s.pid} · active ${timeAgo(s.lastActivity)}` : `active ${timeAgo(s.lastActivity)}`,
+    onOpen: () => openResumeDialog(s),
+  });
+}
+
+function renderLocalSessions() {
+  renderCollapsible($('running-list'), state.local.running, 'running', localCard);
+  renderCollapsible($('recent-list'), state.local.recent, 'recent', localCard);
+}
+
+async function loadLocalSessions() {
+  try {
+    state.local = await api('/api/local-sessions');
+    renderLocalSessions();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function openResumeDialog(s) {
+  $('resume-title').textContent = s.title;
+  $('resume-cwd').textContent = shortPath(s.cwd);
+
+  const actions = $('resume-actions');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => $('resume-dialog').close());
+
+  const action = (label, className, mode) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = label;
+    button.addEventListener('click', () => resumeLocalSession(s, mode, button));
+    return button;
+  };
+
+  if (s.pid) {
+    $('resume-text').textContent =
+      'Still open in another terminal. Fork: continue a copy here, the original keeps running. ' +
+      'Take over: close the original (its terminal loses the session) and continue it here.';
+    actions.replaceChildren(cancel, action('Fork', '', 'fork'), action('Take over', 'danger', 'takeover'));
+  } else {
+    $('resume-text').textContent = 'Continue this conversation in a new tmux terminal.';
+    actions.replaceChildren(cancel, action('Resume', 'primary', undefined));
+  }
+  $('resume-dialog').showModal();
+}
+
+async function resumeLocalSession(s, mode, button) {
+  const buttons = $('resume-actions').querySelectorAll('button');
+  buttons.forEach((b) => (b.disabled = true));
+  button.textContent = mode === 'takeover' ? 'Closing original…' : 'Starting…';
+  try {
+    const { name } = await api(`/api/local-sessions/${s.sessionId}/resume`, {
+      method: 'POST',
+      body: JSON.stringify(mode ? { mode } : {}),
+    });
+    $('resume-dialog').close();
+    openSession(name);
+  } catch (err) {
+    toast(err.message);
+    buttons.forEach((b) => (b.disabled = false));
   }
 }
 
@@ -137,6 +247,8 @@ async function killSession(name) {
 function startPolling() {
   stopPolling();
   loadSessions();
+  // Scans ~/.claude transcripts, so only on entering home and on refresh
+  loadLocalSessions();
   state.pollTimer = setInterval(loadSessions, SESSIONS_POLL_MS);
 }
 
@@ -425,7 +537,10 @@ async function init() {
     toast(err.message);
   }
 
-  $('refresh').addEventListener('click', loadSessions);
+  $('refresh').addEventListener('click', () => {
+    loadSessions();
+    loadLocalSessions();
+  });
   $('new-session').addEventListener('click', openNewDialog);
   $('cancel-new').addEventListener('click', () => $('new-dialog').close());
   $('new-form').addEventListener('submit', createSession);

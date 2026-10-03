@@ -22,6 +22,7 @@ src/
 ├── index.ts                     # Entry: HTTP server + terminal WS
 ├── config.ts                    # Zod env config; allowed dirs are realpath'd
 ├── tmux/tmux.ts                 # All tmux CLI calls (list/create/kill/scroll)
+├── claude-sessions/             # Local Claude sessions outside tmux (list, resume, take over)
 ├── server/
 │   ├── app.ts                   # REST routes, static files, /vendor xterm assets
 │   ├── terminal-ws.ts           # WS <-> node-pty bridge, heartbeat
@@ -40,6 +41,8 @@ support/*.plist                  # launchd agents (wake, tunnel, caffeinate)
 - `GET /api/config`
 - `GET /api/sessions`, `POST /api/sessions {cwd, name?, command?}`, `DELETE /api/sessions/:name`
 - `GET /api/directories`
+- `GET /api/local-sessions` returns `{running, recent}`: Claude sessions started outside tmux
+- `POST /api/local-sessions/:id/resume {mode?: 'fork'|'takeover'}` opens `claude --resume <id>` in a new tmux session. `mode` is required while the original is still running.
 - `WS /ws/terminal?session=&cols=&rows=`. Client sends JSON `{t:'input',d}`, `{t:'resize',cols,rows}`, `{t:'scroll',dir}`, `{t:'scroll-exit'}`. Server sends raw terminal output.
 
 ## Gotchas
@@ -53,6 +56,17 @@ support/*.plist                  # launchd agents (wake, tunnel, caffeinate)
 - **Cloudflare drops idle WebSockets (~100s)**. The server pings every 30s.
 - **TLS-inspecting proxies (Netskope) break JWT validation** with `fetch failed` / `SELF_SIGNED_CERT_IN_CHAIN`: Node ignores the macOS keychain. The wake plist sets `NODE_USE_SYSTEM_CA=1` (Node >= 23.8), and omni-bot inherits it.
 - **CF Access JWT on WS upgrades** comes in the `Cf-Access-Jwt-Assertion` header, with the `CF_Authorization` cookie as fallback. No separate WS token exchange.
+
+## Local Claude sessions (`src/claude-sessions/`)
+
+This module reads Claude Code internals that are not a public API and can change between versions:
+- `~/.claude/sessions/<pid>.json`: registry of running sessions (`pid`, `sessionId`, `cwd`, `kind`). Entries can outlive their process, so check liveness and confirm the pid is still `claude` before sending a signal.
+- `~/.claude/projects/<dir>/<id>.jsonl`: transcripts. Title comes from `custom-title` > `ai-title` > first prompt. `entrypoint: "sdk-cli"` marks headless runs (`claude -p`, hooks), which are filtered out.
+- **File mtime is not activity.** Claude Code rewrites open transcripts while idle. Use the latest record `timestamp`.
+- Transcripts reach tens of MB, so only the first and last 64 KB are read.
+- A session gets a transcript only after its first message. Running sessions without one are hidden, because resume would fail after a take-over had already killed the original.
+- "Outside tmux" means no tmux pane shell among the process's ancestors.
+- Resume runs `command claude --resume <id>`. `command` skips the user's `claude` shell function (worktree wrapper), which would otherwise create a fresh worktree instead of resuming in place.
 
 ## Code Style
 

@@ -9,6 +9,12 @@ import { appConfig } from '../config.js';
 import { cfAccessMiddleware } from './middleware/cf-access.js';
 import { listCandidateDirectories } from './directories.js';
 import {
+  findLocalSession,
+  isSessionId,
+  listLocalSessions,
+  stopLocalSession,
+} from '../claude-sessions/claude-sessions.js';
+import {
   createSession,
   isPathAllowed,
   killSession,
@@ -29,6 +35,13 @@ const createSessionSchema = z.object({
   name: z.string().max(64).optional(),
   command: z.string().max(500).optional(),
 });
+
+const resumeSchema = z.object({
+  // Required for a session still running elsewhere: two processes must not share one transcript
+  mode: z.enum(['fork', 'takeover']).optional(),
+});
+
+const RESUMED_NAME_MAX = 40;
 
 function asyncHandler(fn: (req: Request, res: Response) => Promise<void>) {
   return (req: Request, res: Response, next: NextFunction): void => {
@@ -109,6 +122,55 @@ export function createApp(): express.Application {
     '/api/directories',
     asyncHandler(async (_req, res) => {
       res.json(await listCandidateDirectories(appConfig.allowedDirectories));
+    })
+  );
+
+  app.get(
+    '/api/local-sessions',
+    asyncHandler(async (_req, res) => {
+      res.json(await listLocalSessions());
+    })
+  );
+
+  app.post(
+    '/api/local-sessions/:id/resume',
+    asyncHandler(async (req, res) => {
+      const id = String(req.params.id);
+      const parsed = resumeSchema.safeParse(req.body ?? {});
+      if (!isSessionId(id) || !parsed.success) {
+        res.status(400).json({ error: 'Invalid request' });
+        return;
+      }
+
+      // cwd comes from Claude's own records, never from the client, so no directory guard here
+      const session = await findLocalSession(id);
+      if (!session) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+
+      const { mode } = parsed.data;
+      if (session.pid && !mode) {
+        res.status(409).json({ error: 'Session is still running; fork it or take it over' });
+        return;
+      }
+      if (session.pid && mode === 'takeover') {
+        try {
+          await stopLocalSession(session.pid);
+        } catch (err) {
+          res.status(409).json({ error: (err as Error).message });
+          return;
+        }
+      }
+
+      // `command` skips the user's `claude` shell function (worktree wrapper): resume in place
+      const flags = session.pid && mode === 'fork' ? ' --fork-session' : '';
+      const name = await createSession({
+        cwd: session.cwd,
+        name: session.title.slice(0, RESUMED_NAME_MAX),
+        command: `command claude --resume ${id}${flags}`,
+      });
+      res.status(201).json({ name });
     })
   );
 

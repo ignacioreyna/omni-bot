@@ -112,6 +112,17 @@ export async function listSessions(): Promise<TmuxSession[]> {
   }
 }
 
+/** PIDs of the shells running in every tmux pane (empty when no server is running). */
+export async function listPanePids(): Promise<number[]> {
+  try {
+    const out = await tmux(['list-panes', '-a', '-F', '#{pane_pid}']);
+    return out.split('\n').filter(Boolean).map(Number);
+  } catch (err) {
+    if (isNoServerError(err)) return [];
+    throw err;
+  }
+}
+
 export async function sessionExists(name: string): Promise<boolean> {
   try {
     await tmux(['has-session', '-t', sessionTarget(name)]);
@@ -136,19 +147,13 @@ export async function createSession(opts: CreateSessionOptions): Promise<string>
 
   const pane = `${sessionTarget(name)}:`;
   await tmux(['new-session', '-d', '-s', name, '-c', opts.cwd, '-x', '200', '-y', '50']);
-  // mouse: touch scrolling arrives as wheel events; status: a wasted row on a phone screen
+  // mouse: touch scrolling arrives as wheel events; status: a wasted row on a phone screen;
+  // focus-events (server-wide): Claude Code asks for it to track terminal focus
+  // prettier-ignore
   await tmux([
-    'set-option',
-    '-t',
-    pane,
-    'mouse',
-    'on',
-    ';',
-    'set-option',
-    '-t',
-    pane,
-    'status',
-    'off',
+    'set-option', '-t', pane, 'mouse', 'on', ';',
+    'set-option', '-t', pane, 'status', 'off', ';',
+    'set-option', '-g', 'focus-events', 'on',
   ]);
 
   if (opts.command) {

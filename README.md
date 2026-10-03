@@ -14,6 +14,7 @@ iPhone ─▶ CF Access ─▶ cloudflared ─▶ wake server :3000 ──proxy�
 - Session list showing cwd, running command, last activity and attached clients
 - New session: pick a directory, start with `claude`, `claude --continue`, `claude --resume` or a plain shell
 - xterm.js terminal with a key bar for keys the iOS keyboard lacks: Esc, sticky Ctrl, ^C, Tab, ⇧Tab, arrows, PgUp/PgDn (tmux scrollback), Live
+- Resume Claude sessions started in local terminals: running ones by forking or taking over the original process, closed ones directly
 - Composer box for dictation and multi-line messages (sent as a bracketed paste)
 - Auto-reconnect when iOS suspends the tab
 - Wake server: an always-on process (launchd) that starts, stops and rebuilds omni-bot remotely at `/wake`
