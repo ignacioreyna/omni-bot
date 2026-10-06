@@ -38,7 +38,8 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
       req.user = user;
       next();
     })
-    .catch(() => {
+    .catch((err: Error) => {
+      console.error('[Wake] JWT validation failed:', err.message);
       res.status(401).json({ error: 'Invalid CF Access JWT' });
     });
 }

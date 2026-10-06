@@ -1,19 +1,25 @@
 import { createServer } from 'http';
 import { createApp } from './server/app.js';
-import { setupWebSocket } from './server/websocket.js';
-import { startup } from './lifecycle/startup.js';
-import { setupShutdownHandlers } from './lifecycle/shutdown.js';
+import { setupTerminalWebSocket } from './server/terminal-ws.js';
 import { appConfig } from './config.js';
 
-setupShutdownHandlers();
-startup();
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+  process.exit(1);
+});
 
-const app = createApp();
-const server = createServer(app);
+const server = createServer(createApp());
+setupTerminalWebSocket(server);
 
-setupWebSocket(server);
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    console.log(`Received ${signal}, shutting down (tmux sessions keep running)`);
+    server.close();
+    process.exit(0);
+  });
+}
 
 server.listen(appConfig.port, () => {
-  console.log(`Omni-Bot server running on http://localhost:${appConfig.port}`);
+  console.log(`Omni-Bot running on http://localhost:${appConfig.port}`);
   console.log(`Allowed directories: ${appConfig.allowedDirectories.join(', ')}`);
 });

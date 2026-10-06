@@ -20,6 +20,9 @@
         <string>/Users/M-REYNAIGFJL.fibertel.com.ar/.nvm/versions/node/v24.12.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>NODE_ENV</key>
         <string>production</string>
+        <!-- Trust the macOS keychain: TLS-inspecting proxies (Netskope) break fetching CF Access certs -->
+        <key>NODE_USE_SYSTEM_CA</key>
+        <string>1</string>
     </dict>
 
     <key>RunAtLoad</key>
