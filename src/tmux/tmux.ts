@@ -5,31 +5,47 @@ import { appConfig, OMNI_BOT_ENV_KEYS } from '../config.js';
 
 const execFileAsync = promisify(execFile);
 
-export interface TmuxSession {
-  name: string;
-  windows: number;
-  attachedClients: number;
-  createdAt: string;
-  lastActivity: string;
+/**
+ * A terminal is a tmux pane, identified by its server-wide pane id (`%12`). Sessions are
+ * an implementation detail: the desktop typically runs one session (`main`) with a window
+ * per tab, and each phone connection gets its own grouped `omni-*` view session.
+ */
+export interface TmuxPane {
+  paneId: string;
+  session: string;
+  windowIndex: number;
+  windowName: string;
   cwd: string;
   command: string;
+  panePid: number;
+  lastActivity: string;
 }
 
-export interface CreateSessionOptions {
+export interface CreateTerminalOptions {
   cwd: string;
   name?: string;
   command?: string;
 }
 
+export class LastPaneError extends Error {
+  constructor(session: string) {
+    super(`Refusing to kill the last terminal of session "${session}"`);
+  }
+}
+
+/** Per-connection grouped sessions created by omni-bot; never listed as terminals. */
+export const VIEW_SESSION_PREFIX = 'omni-';
+
 const FIELD_SEPARATOR = '\t';
-const SESSION_FORMAT = [
+const PANE_FORMAT = [
+  '#{pane_id}',
   '#{session_name}',
-  '#{session_windows}',
-  '#{session_attached}',
-  '#{session_created}',
-  '#{session_activity}',
+  '#{window_index}',
+  '#{window_name}',
   '#{pane_current_path}',
   '#{pane_current_command}',
+  '#{pane_pid}',
+  '#{window_activity}',
 ].join(FIELD_SEPARATOR);
 
 export function tmuxArgs(args: string[]): string[] {
@@ -66,16 +82,28 @@ function isNoServerError(err: unknown): boolean {
   return /no server running|error connecting to|No such file or directory/.test(stderr);
 }
 
-/** Exact-match target; a bare name would let tmux prefix-match another session. */
+/**
+ * Exact-match session target; a bare name would let tmux prefix-match another session.
+ * Commands taking a pane target (set-option, display, send-keys) need `=name:` instead.
+ */
 export function sessionTarget(name: string): string {
   return `=${name}`;
 }
 
-export function sanitizeSessionName(raw: string): string {
+export function isPaneId(value: string): boolean {
+  return /^%\d+$/.test(value);
+}
+
+/** Hidden sessions (`_terminals`-style helpers) and omni-bot's own view sessions. */
+export function isHiddenSession(name: string): boolean {
+  return name.startsWith('_') || name.startsWith(VIEW_SESSION_PREFIX);
+}
+
+export function sanitizeWindowName(raw: string): string {
   return raw
     .trim()
-    .replace(/[^A-Za-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[^A-Za-z0-9_ .-]+/g, '-')
+    .replace(/^[-. ]+|[-. ]+$/g, '')
     .slice(0, 64);
 }
 
@@ -84,35 +112,41 @@ export function isPathAllowed(target: string, allowedDirectories: string[]): boo
   return allowedDirectories.some((dir) => resolved === dir || resolved.startsWith(dir + path.sep));
 }
 
-export function parseSessionLine(line: string): TmuxSession | null {
+export function parsePaneLine(line: string): TmuxPane | null {
   const parts = line.split(FIELD_SEPARATOR);
-  if (parts.length < 7) return null;
-  const [name, windows, attached, created, activity, cwd, command] = parts;
+  if (parts.length < 8) return null;
+  const [paneId, session, windowIndex, windowName, cwd, command, panePid, activity] = parts;
   return {
-    name,
-    windows: Number(windows),
-    attachedClients: Number(attached),
-    createdAt: new Date(Number(created) * 1000).toISOString(),
-    lastActivity: new Date(Number(activity) * 1000).toISOString(),
+    paneId,
+    session,
+    windowIndex: Number(windowIndex),
+    windowName,
     cwd,
     // Claude Code's native binary reports itself as claude.exe
     command: command.replace(/\.exe$/, ''),
+    panePid: Number(panePid),
+    lastActivity: new Date(Number(activity) * 1000).toISOString(),
   };
 }
 
-export async function listSessions(): Promise<TmuxSession[]> {
+/** Every visible pane once: grouped sessions (ours or the user's) repeat the same panes. */
+export async function listPanes(): Promise<TmuxPane[]> {
+  let out: string;
   try {
-    const out = await tmux(['list-sessions', '-F', SESSION_FORMAT]);
-    return out
-      .split('\n')
-      .filter(Boolean)
-      .map(parseSessionLine)
-      .filter((s): s is TmuxSession => s !== null)
-      .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
+    out = await tmux(['list-panes', '-a', '-F', PANE_FORMAT]);
   } catch (err) {
     if (isNoServerError(err)) return [];
     throw err;
   }
+
+  const panes = new Map<string, TmuxPane>();
+  for (const line of out.split('\n')) {
+    const pane = parsePaneLine(line);
+    if (pane && !isHiddenSession(pane.session) && !panes.has(pane.paneId)) {
+      panes.set(pane.paneId, pane);
+    }
+  }
+  return [...panes.values()].sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
 }
 
 /** PIDs of the shells running in every tmux pane (empty when no server is running). */
@@ -126,7 +160,7 @@ export async function listPanePids(): Promise<number[]> {
   }
 }
 
-export async function sessionExists(name: string): Promise<boolean> {
+async function sessionExists(name: string): Promise<boolean> {
   try {
     await tmux(['has-session', '-t', sessionTarget(name)]);
     return true;
@@ -135,51 +169,102 @@ export async function sessionExists(name: string): Promise<boolean> {
   }
 }
 
-async function uniqueName(base: string): Promise<string> {
-  const existing = new Set((await listSessions()).map((s) => s.name));
-  if (!existing.has(base)) return base;
-  for (let i = 2; ; i++) {
-    const candidate = `${base}-${i}`;
-    if (!existing.has(candidate)) return candidate;
+/** Session and window of a pane, or null if it is gone. */
+export async function paneLocation(
+  paneId: string
+): Promise<{ session: string; windowId: string } | null> {
+  if (!isPaneId(paneId)) return null;
+  try {
+    // display -t on a missing pane exits 0 with empty output, so compare the echoed id
+    const out = await tmux([
+      'display-message',
+      '-p',
+      '-t',
+      paneId,
+      '#{pane_id}\t#{session_name}\t#{window_id}',
+    ]);
+    const [id, session, windowId] = out.trim().split(FIELD_SEPARATOR);
+    return id === paneId ? { session, windowId } : null;
+  } catch {
+    return null;
   }
 }
 
-export async function createSession(opts: CreateSessionOptions): Promise<string> {
-  const base = sanitizeSessionName(opts.name || path.basename(opts.cwd)) || 'session';
-  const name = await uniqueName(base);
+/** Opens a new window (a tab on the desktop) in the main session and returns its pane id. */
+export async function createTerminal(opts: CreateTerminalOptions): Promise<string> {
+  const main = appConfig.tmuxMainSession;
+  const nameArgs = opts.name ? ['-n', sanitizeWindowName(opts.name) || 'terminal'] : [];
+  const printPane = ['-P', '-F', '#{pane_id}'];
 
-  const pane = `${sessionTarget(name)}:`;
-  await tmux(['new-session', '-d', '-s', name, '-c', opts.cwd, '-x', '200', '-y', '50']);
-  // mouse: touch scrolling arrives as wheel events; status: a wasted row on a phone screen;
-  // focus-events (server-wide): Claude Code asks for it to track terminal focus
-  // prettier-ignore
-  await tmux([
-    'set-option', '-t', pane, 'mouse', 'on', ';',
-    'set-option', '-t', pane, 'status', 'off', ';',
-    'set-option', '-g', 'focus-events', 'on',
-  ]);
+  const out = (await sessionExists(main))
+    ? await tmux([
+        'new-window',
+        '-t',
+        `${sessionTarget(main)}:`,
+        '-c',
+        opts.cwd,
+        ...nameArgs,
+        ...printPane,
+      ])
+    : await tmux(['new-session', '-d', '-s', main, '-c', opts.cwd, ...nameArgs, ...printPane]);
+  const paneId = out.trim();
 
+  // Server-wide: Claude Code asks for it to track terminal focus
+  await tmux(['set-option', '-g', 'focus-events', 'on']);
   if (opts.command) {
-    await tmux(['send-keys', '-t', pane, opts.command, 'Enter']);
+    await tmux(['send-keys', '-t', paneId, opts.command, 'Enter']);
   }
-
-  return name;
+  return paneId;
 }
 
-export async function killSession(name: string): Promise<void> {
-  await tmux(['kill-session', '-t', sessionTarget(name)]);
+/** Kills a pane (its window goes with it if it was the only pane), never a whole session. */
+export async function killTerminal(paneId: string): Promise<void> {
+  const location = await paneLocation(paneId);
+  if (!location) return;
+  const panesInSession = (await tmux(['list-panes', '-s', '-t', paneId, '-F', '#{pane_id}']))
+    .split('\n')
+    .filter(Boolean);
+  if (panesInSession.length <= 1) throw new LastPaneError(location.session);
+  await tmux(['kill-pane', '-t', paneId]);
 }
 
-export async function scrollSession(name: string, direction: 'up' | 'down'): Promise<void> {
-  const target = `${sessionTarget(name)}:`;
+/**
+ * tmux argv that creates and attaches a view session grouped with the pane's session,
+ * focused on the pane. The phone gets its own current window, so switching tabs there
+ * never moves the desktop. destroy-unattached must be set while a client is attached
+ * (tmux destroys an unattached session the moment it is set), hence one command line.
+ */
+export function viewSessionArgs(
+  viewSession: string,
+  location: { session: string; windowId: string },
+  paneId: string
+): string[] {
+  const view = `${sessionTarget(viewSession)}:`;
+  // prettier-ignore
+  return tmuxArgs([
+    '-u', 'new-session', '-t', sessionTarget(location.session), '-s', viewSession, ';',
+    'set-option', '-t', view, 'destroy-unattached', 'on', ';',
+    // Only on the view session: the desktop's session keeps its own status bar and mouse
+    'set-option', '-t', view, 'status', 'off', ';',
+    'set-option', '-t', view, 'mouse', 'on', ';',
+    'select-window', '-t', `${view}${location.windowId}`, ';',
+    'select-pane', '-t', paneId,
+  ]);
+}
+
+export async function killViewSession(viewSession: string): Promise<void> {
+  await tmux(['kill-session', '-t', sessionTarget(viewSession)]).catch(() => undefined);
+}
+
+export async function scrollPane(paneId: string, direction: 'up' | 'down'): Promise<void> {
   if (direction === 'up') {
-    await tmux(['copy-mode', '-u', '-t', target]);
+    await tmux(['copy-mode', '-u', '-t', paneId]);
     return;
   }
   // page-down only exists inside copy-mode; outside it there is nothing to scroll
-  await tmux(['send-keys', '-X', '-t', target, 'page-down']).catch(() => undefined);
+  await tmux(['send-keys', '-X', '-t', paneId, 'page-down']).catch(() => undefined);
 }
 
-export async function exitScrollMode(name: string): Promise<void> {
-  await tmux(['send-keys', '-X', '-t', `${sessionTarget(name)}:`, 'cancel']).catch(() => undefined);
+export async function exitScrollMode(paneId: string): Promise<void> {
+  await tmux(['send-keys', '-X', '-t', paneId, 'cancel']).catch(() => undefined);
 }

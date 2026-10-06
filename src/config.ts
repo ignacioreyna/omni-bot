@@ -16,6 +16,8 @@ export const OMNI_BOT_ENV_KEYS: ReadonlySet<string> = new Set([
   'CF_ACCESS_AUD',
   'DEFAULT_COMMAND',
   'TMUX_SOCKET_NAME',
+  'TMUX_MAIN_SESSION',
+  'CLAUDE_ATTENTION_DIR',
   'OMNI_BOT_PORT',
   'OMNI_BOT_LOG_PATH',
 ]);
@@ -56,6 +58,10 @@ const configSchema = z.object({
   defaultCommand: z.string().default('claude'),
   // Optional dedicated tmux socket (tmux -L); default shares the user's tmux server
   tmuxSocketName: z.string().optional(),
+  // Session where new terminals open as windows (the desktop's tabs)
+  tmuxMainSession: z.string().min(1).default('main'),
+  // Marker files (one per Claude session id) written by hooks while a session waits for input
+  attentionDir: z.string().default('~/.cache/tmux-terminals/attention'),
 });
 
 function loadConfig() {
@@ -67,6 +73,8 @@ function loadConfig() {
     cfAccessAud: process.env.CF_ACCESS_AUD,
     defaultCommand: process.env.DEFAULT_COMMAND,
     tmuxSocketName: process.env.TMUX_SOCKET_NAME || undefined,
+    tmuxMainSession: process.env.TMUX_MAIN_SESSION || undefined,
+    attentionDir: process.env.CLAUDE_ATTENTION_DIR || undefined,
   });
 
   if (!result.success) {
@@ -92,7 +100,11 @@ function loadConfig() {
     .filter((d) => fs.existsSync(d))
     .map((d) => fs.realpathSync(d));
 
-  return { ...result.data, allowedDirectories };
+  return {
+    ...result.data,
+    allowedDirectories,
+    attentionDir: path.resolve(expandPath(result.data.attentionDir)),
+  };
 }
 
 export type Config = ReturnType<typeof loadConfig>;

@@ -13,7 +13,7 @@ const SUBMIT_DELAY_MS = 80;
 const state = {
   home: '',
   defaultCommand: 'claude',
-  sessions: [],
+  terminals: [],
   local: { running: [], recent: [] },
   expanded: new Set(),
   directories: [],
@@ -22,7 +22,7 @@ const state = {
   term: null,
   fit: null,
   ws: null,
-  session: null,
+  paneId: null,
   ctrlArmed: false,
   reconnectTimer: null,
   reconnectAttempts: 0,
@@ -104,7 +104,7 @@ function sessionCard({ title, dot, cwd, meta, onOpen, onKill }) {
     const kill = document.createElement('button');
     kill.className = 'kill-btn';
     kill.textContent = '✕';
-    kill.title = 'Kill session';
+    kill.title = 'Close terminal';
     kill.addEventListener('click', (e) => {
       e.stopPropagation();
       onKill();
@@ -114,17 +114,27 @@ function sessionCard({ title, dot, cwd, meta, onOpen, onKill }) {
   return li;
 }
 
-function renderSessions() {
-  $('empty').hidden = state.sessions.length > 0;
+const SHELLS = new Set(['zsh', 'bash', 'fish', 'sh']);
+
+/** Window name when it says something (renamed or a meaningful auto-name), else the folder. */
+function terminalTitle(t) {
+  const generic = !t.windowName || t.windowName === t.command || SHELLS.has(t.windowName);
+  return generic ? t.cwd.split('/').pop() || t.cwd : t.windowName;
+}
+
+function renderTerminals() {
+  $('empty').hidden = state.terminals.length > 0;
+  // Sessions waiting for input first: that is what you open the phone for
+  const ordered = [...state.terminals].sort((a, b) => Number(b.waitingForInput) - Number(a.waitingForInput));
   $('session-list').replaceChildren(
-    ...state.sessions.map((s) =>
+    ...ordered.map((t) =>
       sessionCard({
-        title: s.name,
-        dot: s.attachedClients > 0 && { className: 'attached-dot', title: `${s.attachedClients} client(s) attached` },
-        cwd: s.cwd,
-        meta: `${s.command} · active ${timeAgo(s.lastActivity)}`,
-        onOpen: () => openSession(s.name),
-        onKill: () => killSession(s.name),
+        title: terminalTitle(t),
+        dot: t.waitingForInput && { className: 'waiting-dot', title: 'Waiting for your input' },
+        cwd: t.cwd,
+        meta: `${t.waitingForInput ? 'waiting for input · ' : ''}${t.session}:${t.windowIndex} · ${t.command} · active ${timeAgo(t.lastActivity)}`,
+        onOpen: () => openTerminal(t.paneId),
+        onKill: () => killTerminal(t),
       })
     )
   );
@@ -213,32 +223,32 @@ async function resumeLocalSession(s, mode, button) {
   buttons.forEach((b) => (b.disabled = true));
   button.textContent = mode === 'takeover' ? 'Closing original…' : 'Starting…';
   try {
-    const { name } = await api(`/api/local-sessions/${s.sessionId}/resume`, {
+    const { paneId } = await api(`/api/local-sessions/${s.sessionId}/resume`, {
       method: 'POST',
       body: JSON.stringify(mode ? { mode } : {}),
     });
     $('resume-dialog').close();
-    openSession(name);
+    openTerminal(paneId);
   } catch (err) {
     toast(err.message);
     buttons.forEach((b) => (b.disabled = false));
   }
 }
 
-async function loadSessions() {
+async function loadTerminals() {
   try {
-    state.sessions = await api('/api/sessions');
-    renderSessions();
+    state.terminals = await api('/api/terminals');
+    renderTerminals();
   } catch (err) {
     toast(err.message);
   }
 }
 
-async function killSession(name) {
-  if (!confirm(`Kill session "${name}"? Anything running in it will stop.`)) return;
+async function killTerminal(t) {
+  if (!confirm(`Close "${terminalTitle(t)}" (${t.session}:${t.windowIndex})? Anything running in it will stop.`)) return;
   try {
-    await api(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    await loadSessions();
+    await api(`/api/terminals/${encodeURIComponent(t.paneId)}`, { method: 'DELETE' });
+    await loadTerminals();
   } catch (err) {
     toast(err.message);
   }
@@ -246,10 +256,10 @@ async function killSession(name) {
 
 function startPolling() {
   stopPolling();
-  loadSessions();
+  loadTerminals();
   // Scans ~/.claude transcripts, so only on entering home and on refresh
   loadLocalSessions();
-  state.pollTimer = setInterval(loadSessions, SESSIONS_POLL_MS);
+  state.pollTimer = setInterval(loadTerminals, SESSIONS_POLL_MS);
 }
 
 function stopPolling() {
@@ -316,7 +326,7 @@ async function createSession(e) {
   const button = $('create-session');
   button.disabled = true;
   try {
-    const { name } = await api('/api/sessions', {
+    const { paneId } = await api('/api/terminals', {
       method: 'POST',
       body: JSON.stringify({
         cwd,
@@ -325,7 +335,7 @@ async function createSession(e) {
       }),
     });
     $('new-dialog').close();
-    openSession(name);
+    openTerminal(paneId);
   } catch (err) {
     toast(err.message);
   } finally {
@@ -406,7 +416,7 @@ function connect() {
   fitTerminal();
   const { cols, rows } = state.term;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/ws/terminal?session=${encodeURIComponent(state.session)}&cols=${cols}&rows=${rows}`;
+  const url = `${proto}//${location.host}/ws/terminal?pane=${encodeURIComponent(state.paneId)}&cols=${cols}&rows=${rows}`;
   const ws = new WebSocket(url);
   state.ws = ws;
 
@@ -418,7 +428,7 @@ function connect() {
   };
   ws.onmessage = (e) => state.term.write(e.data);
   ws.onclose = () => {
-    if (state.ws !== ws || !state.session) return;
+    if (state.ws !== ws || !state.paneId) return;
     $('disconnected').hidden = false;
     scheduleReconnect();
   };
@@ -490,26 +500,27 @@ function changeFontSize(delta) {
 
 /* ---------- Routing ---------- */
 
-function openSession(name) {
-  location.hash = `#/s/${encodeURIComponent(name)}`;
+function openTerminal(paneId) {
+  location.hash = `#/p/${encodeURIComponent(paneId)}`;
 }
 
 function route() {
-  const match = location.hash.match(/^#\/s\/(.+)$/);
+  const match = location.hash.match(/^#\/p\/(.+)$/);
   if (match) {
-    const name = decodeURIComponent(match[1]);
+    const paneId = decodeURIComponent(match[1]);
+    const known = state.terminals.find((t) => t.paneId === paneId);
     stopPolling();
     $('home').hidden = true;
     $('term-view').hidden = false;
-    $('term-title').textContent = name;
+    $('term-title').textContent = known ? terminalTitle(known) : paneId;
     ensureTerminal();
-    if (state.session !== name || !state.ws) {
-      state.session = name;
+    if (state.paneId !== paneId || !state.ws) {
+      state.paneId = paneId;
       state.reconnectAttempts = 0;
       requestAnimationFrame(connect);
     }
   } else {
-    state.session = null;
+    state.paneId = null;
     disconnect();
     $('term-view').hidden = true;
     $('home').hidden = false;
@@ -538,7 +549,7 @@ async function init() {
   }
 
   $('refresh').addEventListener('click', () => {
-    loadSessions();
+    loadTerminals();
     loadLocalSessions();
   });
   $('new-session').addEventListener('click', openNewDialog);
@@ -578,7 +589,7 @@ async function init() {
   window.addEventListener('resize', syncViewport);
   window.visualViewport?.addEventListener('resize', syncViewport);
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden || !state.session) return;
+    if (document.hidden || !state.paneId) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
       state.reconnectAttempts = 0;
       connect();

@@ -10,17 +10,20 @@ import { appConfig } from '../config.js';
 import { cfAccessMiddleware } from './middleware/cf-access.js';
 import { listCandidateDirectories } from './directories.js';
 import {
+  claudeSessionsByPane,
   findLocalSession,
   isSessionId,
+  isWaitingForInput,
   listLocalSessions,
   stopLocalSession,
 } from '../claude-sessions/claude-sessions.js';
 import {
-  createSession,
+  createTerminal,
   isPathAllowed,
-  killSession,
-  listSessions,
-  sessionExists,
+  killTerminal,
+  LastPaneError,
+  listPanes,
+  paneLocation,
 } from '../tmux/tmux.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,7 +50,7 @@ function packageDir(name: string): string {
   return path.dirname(require.resolve(`${name}/package.json`));
 }
 
-const createSessionSchema = z.object({
+const createTerminalSchema = z.object({
   cwd: z.string().min(1),
   name: z.string().max(64).optional(),
   command: z.string().max(500).optional(),
@@ -90,16 +93,27 @@ export function createApp(): express.Application {
   });
 
   app.get(
-    '/api/sessions',
+    '/api/terminals',
     asyncHandler(async (_req, res) => {
-      res.json(await listSessions());
+      const panes = await listPanes();
+      const claudeSessions = await claudeSessionsByPane(panes);
+      res.json(
+        panes.map(({ panePid: _pid, ...pane }) => {
+          const claudeSessionId = claudeSessions.get(pane.paneId);
+          return {
+            ...pane,
+            claudeSessionId,
+            waitingForInput: claudeSessionId ? isWaitingForInput(claudeSessionId) : false,
+          };
+        })
+      );
     })
   );
 
   app.post(
-    '/api/sessions',
+    '/api/terminals',
     asyncHandler(async (req, res) => {
-      const parsed = createSessionSchema.safeParse(req.body);
+      const parsed = createTerminalSchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
         return;
@@ -117,20 +131,28 @@ export function createApp(): express.Application {
         return;
       }
 
-      const name = await createSession({ ...parsed.data, cwd });
-      res.status(201).json({ name });
+      const paneId = await createTerminal({ ...parsed.data, cwd });
+      res.status(201).json({ paneId });
     })
   );
 
   app.delete(
-    '/api/sessions/:name',
+    '/api/terminals/:paneId',
     asyncHandler(async (req, res) => {
-      const name = String(req.params.name);
-      if (!(await sessionExists(name))) {
-        res.status(404).json({ error: 'Session not found' });
+      const paneId = String(req.params.paneId);
+      if (!(await paneLocation(paneId))) {
+        res.status(404).json({ error: 'Terminal not found' });
         return;
       }
-      await killSession(name);
+      try {
+        await killTerminal(paneId);
+      } catch (err) {
+        if (err instanceof LastPaneError) {
+          res.status(409).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
       res.status(204).end();
     })
   );
@@ -182,12 +204,12 @@ export function createApp(): express.Application {
 
       // `command` skips the user's `claude` shell function (worktree wrapper): resume in place
       const flags = session.pid && mode === 'fork' ? ' --fork-session' : '';
-      const name = await createSession({
+      const paneId = await createTerminal({
         cwd: session.cwd,
         name: session.title.slice(0, RESUMED_NAME_MAX),
         command: `command claude --resume ${id}${flags}`,
       });
-      res.status(201).json({ name });
+      res.status(201).json({ paneId });
     })
   );
 

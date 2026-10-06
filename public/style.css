@@ -102,6 +102,7 @@ button:active { background: var(--border); }
   font-size: 0.85rem;
 }
 
+.waiting-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); display: inline-block; box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.25); }
 .running-dot { width: 8px; height: 8px; border-radius: 50%; background: #d29922; display: inline-block; }
 
 .resume-cwd { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; color: var(--muted); word-break: break-all; }

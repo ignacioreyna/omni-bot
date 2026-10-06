@@ -4,6 +4,7 @@ import { open, readdir, readFile, stat } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { appConfig } from '../config.js';
 import { listPanePids } from '../tmux/tmux.js';
 
 const execFileAsync = promisify(execFile);
@@ -315,4 +316,34 @@ export async function stopLocalSession(pid: number, timeoutMs = 10_000): Promise
     if (Date.now() > deadline) throw new Error(`Claude (pid ${pid}) did not exit`);
     await new Promise((r) => setTimeout(r, 250));
   }
+}
+
+/** Claude session running in each pane (a claude process descending from the pane's shell). */
+export async function claudeSessionsByPane(
+  panes: { paneId: string; panePid: number }[]
+): Promise<Map<string, string>> {
+  const [registry, parents] = await Promise.all([readRegistry(), parentPids()]);
+  const paneByPid = new Map(panes.map((p) => [p.panePid, p.paneId]));
+  const result = new Map<string, string>();
+
+  for (const entry of registry) {
+    let current: number | undefined = entry.pid;
+    for (let depth = 0; current && current > 1 && depth < 64; depth++) {
+      const paneId = paneByPid.get(current);
+      if (paneId) {
+        result.set(paneId, entry.sessionId);
+        break;
+      }
+      current = parents.get(current);
+    }
+  }
+  return result;
+}
+
+/**
+ * Marker written by the user's Claude Code hooks while a session waits for input (permission
+ * prompt, AskUserQuestion, plan approval) and removed once it continues. No dir = never waiting.
+ */
+export function isWaitingForInput(sessionId: string): boolean {
+  return isSessionId(sessionId) && existsSync(path.join(appConfig.attentionDir, sessionId));
 }

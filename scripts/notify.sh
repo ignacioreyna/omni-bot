@@ -1,6 +1,6 @@
 #!/bin/sh
 # Claude Code hook (Notification / Stop) -> ntfy push notification.
-# Tapping the notification opens the tmux session in Omni-Bot.
+# Tapping the notification opens that terminal (tmux pane) in Omni-Bot.
 #
 # Env: NTFY_TOPIC (required), NTFY_SERVER (default https://ntfy.sh),
 #      OMNI_BOT_URL (e.g. https://omni-bot.example.com)
@@ -10,15 +10,21 @@
 input=$(cat)
 event=$(printf '%s' "$input" | jq -r '.hook_event_name // "Notification"')
 message=$(printf '%s' "$input" | jq -r '.message // "Claude finished"')
+cwd=$(printf '%s' "$input" | jq -r '.cwd // empty')
 
-session=""
-[ -n "$TMUX" ] && session=$(tmux display-message -p '#S' 2>/dev/null)
+# The pane, not the session: with one desktop session per user, #S is always "main"
+label=""
+if [ -n "$TMUX_PANE" ]; then
+  label=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)
+  case "$label" in zsh | bash | fish | sh | claude | "") label="" ;; esac
+fi
+[ -z "$label" ] && [ -n "$cwd" ] && label=$(basename "$cwd")
 # HTTP headers are latin1; keep the title ASCII
-title="Claude${session:+ - $session}"
+title="Claude${label:+ - $label}"
 
 click=""
-if [ -n "$OMNI_BOT_URL" ] && [ -n "$session" ]; then
-  click="$OMNI_BOT_URL/#/s/$(printf '%s' "$session" | jq -sRr @uri)"
+if [ -n "$OMNI_BOT_URL" ] && [ -n "$TMUX_PANE" ]; then
+  click="$OMNI_BOT_URL/#/p/$(printf '%s' "$TMUX_PANE" | jq -sRr @uri)"
 fi
 
 [ "$event" = "Stop" ] && message="Finished — waiting for you"

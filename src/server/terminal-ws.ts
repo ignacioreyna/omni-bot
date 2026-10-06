@@ -1,15 +1,17 @@
 import type { Server, IncomingMessage } from 'http';
 import type { Duplex } from 'stream';
+import { randomUUID } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import { authenticate } from './middleware/cf-access.js';
 import {
   exitScrollMode,
-  scrollSession,
-  sessionExists,
-  sessionTarget,
-  tmuxArgs,
+  killViewSession,
+  paneLocation,
+  scrollPane,
   tmuxEnv,
+  VIEW_SESSION_PREFIX,
+  viewSessionArgs,
 } from '../tmux/tmux.js';
 
 const TERMINAL_PATH = '/ws/terminal';
@@ -32,11 +34,18 @@ function rejectUpgrade(socket: Duplex, status: string): void {
   socket.destroy();
 }
 
-function attachTerminal(ws: WebSocket, session: string, cols: number, rows: number): void {
-  // tmuxEnv also drops TMUX, without which attach refuses to nest inside an existing client
+function attachTerminal(
+  ws: WebSocket,
+  paneId: string,
+  location: { session: string; windowId: string },
+  cols: number,
+  rows: number
+): void {
+  const viewSession = `${VIEW_SESSION_PREFIX}${randomUUID().slice(0, 8)}`;
+  // tmuxEnv also drops TMUX, without which tmux refuses to nest inside an existing client
   const env = { ...tmuxEnv(), TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 
-  const term = pty.spawn('tmux', tmuxArgs(['-u', 'attach-session', '-t', sessionTarget(session)]), {
+  const term = pty.spawn('tmux', viewSessionArgs(viewSession, location, paneId), {
     name: 'xterm-256color',
     cols,
     rows,
@@ -67,16 +76,20 @@ function attachTerminal(ws: WebSocket, session: string, cols: number, rows: numb
         term.resize(clampDimension(msg.cols, cols), clampDimension(msg.rows, rows));
         break;
       case 'scroll':
-        void scrollSession(session, msg.dir);
+        void scrollPane(paneId, msg.dir);
         break;
       case 'scroll-exit':
-        void exitScrollMode(session);
+        void exitScrollMode(paneId);
         break;
     }
   });
 
-  // Closing the socket only detaches the tmux client; the session keeps running
-  ws.on('close', () => term.kill());
+  // Detaching destroys the view session (destroy-unattached); the pane itself keeps running.
+  // The explicit kill covers a client that dies before tmux applied the option.
+  ws.on('close', () => {
+    term.kill();
+    void killViewSession(viewSession);
+  });
 }
 
 export function setupTerminalWebSocket(server: Server): void {
@@ -96,8 +109,9 @@ export function setupTerminalWebSocket(server: Server): void {
         return;
       }
 
-      const session = url.searchParams.get('session') ?? '';
-      if (!session || !(await sessionExists(session))) {
+      const paneId = url.searchParams.get('pane') ?? '';
+      const location = await paneLocation(paneId);
+      if (!location) {
         rejectUpgrade(socket, '404 Not Found');
         return;
       }
@@ -106,8 +120,8 @@ export function setupTerminalWebSocket(server: Server): void {
       const rows = clampDimension(url.searchParams.get('rows'), 24);
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        console.log(`[Terminal] ${user.email} attached to ${session}`);
-        attachTerminal(ws, session, cols, rows);
+        console.log(`[Terminal] ${user.email} attached to ${paneId} (${location.session})`);
+        attachTerminal(ws, paneId, location, cols, rows);
       });
     })();
   });
