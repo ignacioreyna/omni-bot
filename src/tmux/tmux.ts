@@ -175,13 +175,15 @@ export async function paneLocation(
 ): Promise<{ session: string; windowId: string } | null> {
   if (!isPaneId(paneId)) return null;
   try {
-    // display -t on a missing pane exits 0 with empty output, so compare the echoed id
+    // display -t on a missing pane exits 0 with empty output, so compare the echoed id.
+    // A bare %pane resolves to the most recently used session of its group (often one of
+    // our omni-* views), so report the group, which is named after the original session.
     const out = await tmux([
       'display-message',
       '-p',
       '-t',
       paneId,
-      '#{pane_id}\t#{session_name}\t#{window_id}',
+      '#{pane_id}\t#{?session_group,#{session_group},#{session_name}}\t#{window_id}',
     ]);
     const [id, session, windowId] = out.trim().split(FIELD_SEPARATOR);
     return id === paneId ? { session, windowId } : null;

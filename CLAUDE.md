@@ -53,6 +53,7 @@ support/*.plist                  # launchd agents (wake, tunnel, caffeinate)
 - **Always target sessions with `=name`** (`sessionTarget()`): a bare name lets tmux prefix-match a different session. Commands that take a *pane* target (`set-option`, `display`, `send-keys`) need `=name:`. `=name` alone fails with "no such session". Pane ids (`%12`) are unambiguous server-wide.
 - **`destroy-unattached on` destroys an unattached session immediately.** The view session must be created and attached in one tmux command line (`viewSessionArgs()`), with the option set after `new-session`.
 - **`display -t %99` on a missing pane exits 0 with empty output.** `paneLocation()` compares the echoed pane id.
+- **A bare `%pane` target resolves to the most recently used session of its group**, often an `omni-*` view while the phone is attached. Pane-level commands don't care, but `paneLocation()` reports `#{session_group}` so the session it returns is the user's.
 - **The user's `~/.tmux.conf` runs in every new server**, test servers included (it spawns `_terminals`). Tests boot their `-L` server with `-f /dev/null`. Never test against the default server: it has the user's live sessions.
 - **node-pty prebuilds ship `spawn-helper` without +x** → `posix_spawnp failed`. The `postinstall` script fixes it; re-run `npm install` if it shows up.
 - **macOS `/tmp` is a symlink** to `/private/tmp`. Allowed dirs and requested cwds are both realpath'd before comparison.

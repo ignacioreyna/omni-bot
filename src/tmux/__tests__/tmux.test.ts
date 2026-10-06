@@ -195,6 +195,9 @@ describe.runIf(hasTmux())('tmux integration', () => {
       String(other.windowIndex)
     );
     expect((await listPanes()).map((p) => p.session)).not.toContain('omni-test');
+    // A bare %pane resolves to the most recently used session of its group (the view session
+    // here); the location must still name the user's session
+    expect((await paneLocation(target.paneId))!.session).toBe('main');
 
     client.kill();
     await new Promise((r) => setTimeout(r, 800));
