@@ -296,6 +296,16 @@ function renderDirectories() {
   }
 }
 
+/**
+ * DEFAULT_COMMAND can be anything (e.g. a shell function such as `c`). A select set to a
+ * value with no matching option silently becomes "", which would start a bare shell.
+ */
+function ensureCommandOption(command) {
+  const select = $('session-command');
+  if (!command || [...select.options].some((o) => o.value === command)) return;
+  select.prepend(new Option(command, command));
+}
+
 function expandTyped(path) {
   return path.startsWith('~') ? state.home + path.slice(1) : path;
 }
@@ -544,6 +554,7 @@ async function init() {
     const cfg = await api('/api/config');
     state.home = cfg.home;
     state.defaultCommand = cfg.defaultCommand;
+    ensureCommandOption(cfg.defaultCommand);
   } catch (err) {
     toast(err.message);
   }
