@@ -470,6 +470,34 @@ function handleKey(key) {
   if (KEY_SEQUENCES[key]) sendInput(KEY_SEQUENCES[key]);
 }
 
+const TAP_SLOP_PX = 10;
+
+// Keys fire on release, and only if the finger didn't swipe the bar sideways.
+// pointerdown + preventDefault keeps focus (and the iOS keyboard) where it was.
+function setupKeybar() {
+  const bar = $('keybar');
+  let press = null;
+
+  bar.addEventListener('pointerdown', (e) => {
+    const button = e.target.closest('button[data-key]');
+    if (!button) return;
+    e.preventDefault();
+    press = { button, pointerId: e.pointerId, x: e.clientX, y: e.clientY, scrollLeft: bar.scrollLeft };
+  });
+  bar.addEventListener('pointerup', (e) => {
+    if (!press || e.pointerId !== press.pointerId) return;
+    const { button, x, y, scrollLeft } = press;
+    press = null;
+    const moved = Math.abs(e.clientX - x) > TAP_SLOP_PX || Math.abs(e.clientY - y) > TAP_SLOP_PX;
+    const released = document.elementFromPoint(e.clientX, e.clientY)?.closest('button[data-key]');
+    if (moved || bar.scrollLeft !== scrollLeft || released !== button) return;
+    handleKey(button.dataset.key);
+  });
+  // The browser cancels the pointer once it takes over the gesture as a scroll
+  bar.addEventListener('pointercancel', () => { press = null; });
+  bar.addEventListener('scroll', () => { press = null; }, { passive: true });
+}
+
 function toggleComposer(force) {
   const composer = $('composer');
   composer.hidden = force === undefined ? !composer.hidden : force;
@@ -579,13 +607,7 @@ async function init() {
     connect();
   });
 
-  // pointerdown + preventDefault keeps focus (and the iOS keyboard) where it was
-  $('keybar').addEventListener('pointerdown', (e) => {
-    const button = e.target.closest('button[data-key]');
-    if (!button) return;
-    e.preventDefault();
-    handleKey(button.dataset.key);
-  });
+  setupKeybar();
 
   $('composer').addEventListener('submit', submitComposer);
   $('composer-input').addEventListener('input', autoGrow);
